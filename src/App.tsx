@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import {
   BarChart3,
   BookOpenText,
@@ -18,8 +18,8 @@ import {
   Users,
 } from 'lucide-react'
 import { Toaster } from 'sonner'
-import { AmapCanvas } from '@/components/AmapCanvas'
 import { ItineraryPanel } from '@/components/ItineraryPanel'
+import { MapCanvas } from '@/components/MapCanvas'
 import { PlaceEditorDialog } from '@/components/PlaceEditorDialog'
 import { ShareDialog } from '@/components/ShareDialog'
 import { TripLibraryDialog } from '@/components/TripLibraryDialog'
@@ -43,11 +43,17 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useRoadbookController } from '@/hooks/use-roadbook-controller'
 import { downloadRoadbook } from '@/lib/roadbooks'
+import type { MapProvider, MapScope } from '@/types'
 
 const AnalyticsDashboard = lazy(() => import('@/components/AnalyticsDashboard'))
 
 function App() {
   const controller = useRoadbookController()
+  const [mapProvider, setMapProvider] = useState<MapProvider>(() => {
+    const saved = localStorage.getItem('tuji-map-provider')
+    return saved === 'baidu' ? 'baidu' : 'amap'
+  })
+  const [mapScope, setMapScope] = useState<MapScope>({ mode: 'global' })
   const {
     roadbooks,
     activeRoadbook,
@@ -79,6 +85,10 @@ function App() {
     readOnly,
     saveStatus,
   } = controller
+
+  useEffect(() => {
+    localStorage.setItem('tuji-map-provider', mapProvider)
+  }, [mapProvider])
 
   const switchMobilePane = (pane: 'plan' | 'map' | 'analytics') => {
     setMobilePane(pane)
@@ -236,8 +246,15 @@ function App() {
             onSelectDay={(dayId) => {
               setActiveDayId(dayId)
               setSelectedStopId(null)
+              setMapScope({ mode: 'day', dayId })
             }}
-            onSelectStop={controller.handleSelectStop}
+            onSelectStop={(stopId) => {
+              controller.handleSelectStop(stopId)
+              const day = activeRoadbook.days.find((item) =>
+                item.stops.some((stop) => stop.id === stopId),
+              )
+              if (day) setMapScope({ mode: 'day', dayId: day.id })
+            }}
             onEditTrip={controller.openTripSettings}
             onAddDay={controller.addDay}
             onDeleteDay={controller.deleteDay}
@@ -249,11 +266,21 @@ function App() {
             onToggleHidden={controller.toggleHidden}
             onDeleteStop={controller.deleteStop}
           />
-          <AmapCanvas
+          <MapCanvas
             roadbook={activeRoadbook}
             activeDayId={activeDay.id}
             selectedStopId={selectedStopId}
-            onSelectStop={controller.handleSelectStop}
+            provider={mapProvider}
+            scope={mapScope}
+            onProviderChange={setMapProvider}
+            onScopeChange={setMapScope}
+            onSelectStop={(stopId) => {
+              controller.handleSelectStop(stopId)
+              const day = activeRoadbook.days.find((item) =>
+                item.stops.some((stop) => stop.id === stopId),
+              )
+              if (day) setMapScope({ mode: 'day', dayId: day.id })
+            }}
             onEditStop={controller.openEditStop}
             onRoutesResolved={controller.handleRoutesResolved}
           />
@@ -279,8 +306,14 @@ function App() {
         roadbooks={roadbooks}
         activeRoadbookId={activeRoadbook.id}
         onOpenChange={setLibraryOpen}
-        onSelect={controller.selectRoadbook}
-        onCreate={controller.createNewRoadbook}
+        onSelect={(id) => {
+          controller.selectRoadbook(id)
+          setMapScope({ mode: 'global' })
+        }}
+        onCreate={() => {
+          controller.createNewRoadbook()
+          setMapScope({ mode: 'global' })
+        }}
         onDuplicate={controller.duplicateRoadbook}
         onDelete={controller.deleteRoadbook}
       />

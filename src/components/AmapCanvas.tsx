@@ -22,23 +22,30 @@ import {
   legCost,
   stopCost,
   totalCost,
-  totalDrivingDistance,
   visibleStops,
 } from '@/lib/roadbooks'
 import {
+  displayDrivingGroups,
+  isPlausibleRouteDistance,
+  markerEntriesForScope,
+  routeGroupsForScope,
+  scopeDrivingDistance,
+  scopeLabel,
+  type RouteGroup,
+} from '@/lib/map-routes'
+import {
   buildAmapNavigationUrl,
   buildAmapPlaceUrl,
-  estimateLeg,
   loadAMap,
   searchNearbyFuelStations,
 } from '@/lib/amap'
 import type {
   MapBaseLayer,
   MapFocusMode,
+  MapScope,
   MapVisibility,
   ResolvedLeg,
   Roadbook,
-  TransportMode,
   TripStop,
 } from '@/types'
 
@@ -49,6 +56,8 @@ interface AmapCanvasProps {
   onSelectStop: (stopId: string) => void
   onEditStop: (stop: TripStop, previousStop: TripStop | null, dayId: string) => void
   onRoutesResolved: (legs: ResolvedLeg[]) => void
+  scope: MapScope
+  onScopeChange: (scope: MapScope) => void
 }
 
 interface RouteResult {
@@ -184,24 +193,33 @@ function findRoutePath(route: any) {
   return steps.flatMap((step: any) => step.path || [])
 }
 
+function endpointRouteKey(group: RouteGroup, reverse = false) {
+  const start = reverse ? group.stops.at(-1)! : group.stops[0]
+  const end = reverse ? group.stops[0] : group.stops.at(-1)!
+  return `${group.dayId}|${start.location.join(',')}|${end.location.join(',')}`
+}
+
 function searchRoute(
   AMap: any,
-  from: [number, number],
-  to: [number, number],
-  mode: TransportMode,
+  group: RouteGroup,
 ): Promise<RouteResult | null> {
-  if (mode === 'transit' || mode === 'train' || mode === 'flight') return Promise.resolve(null)
-  const Service =
-    mode === 'walking' ? AMap.Walking : mode === 'cycling' ? AMap.Riding : AMap.Driving
-  const service = new Service({ extensions: 'all', policy: mode === 'driving' ? 0 : undefined })
+  const points = group.stops.map((stop) => new AMap.LngLat(...stop.location))
+  if (points.length < 2) return Promise.resolve(null)
+  const service = new AMap.Driving({ extensions: 'all', policy: 0 })
 
   return new Promise((resolve) => {
     service.search(
-      new AMap.LngLat(from[0], from[1]),
-      new AMap.LngLat(to[0], to[1]),
+      points[0],
+      points.at(-1),
+      { waypoints: points.slice(1, -1) },
       (status: string, result: any) => {
         const route = result?.routes?.[0]
         if (status !== 'complete' || !route) {
+          resolve(null)
+          return
+        }
+        const distanceKm = Number(((route.distance || 0) / 1000).toFixed(1))
+        if (!isPlausibleRouteDistance(group, distanceKm)) {
           resolve(null)
           return
         }
@@ -215,7 +233,7 @@ function searchRoute(
         )] as string[]
         resolve({
           path: findRoutePath(route),
-          distanceKm: Number(((route.distance || 0) / 1000).toFixed(1)),
+          distanceKm,
           durationMinutes: Math.max(1, Math.round((route.time || route.duration || 0) / 60)),
           tolls: Number(route.tolls) || 0,
           tollDistanceKm: Number(((route.tollsDistance || 0) / 1000).toFixed(1)),
@@ -229,13 +247,11 @@ function searchRoute(
 
 function FallbackMap({
   roadbook,
-  activeDayId,
   selectedStopId,
   onSelectStop,
-}: Pick<AmapCanvasProps, 'roadbook' | 'activeDayId' | 'selectedStopId' | 'onSelectStop'>) {
-  const allStops = roadbook.days.flatMap((day, dayIndex) =>
-    visibleStops(day).map((stop, stopIndex) => ({ day, dayIndex, stop, stopIndex })),
-  )
+  scope,
+}: Pick<AmapCanvasProps, 'roadbook' | 'selectedStopId' | 'onSelectStop' | 'scope'>) {
+  const allStops = markerEntriesForScope(roadbook, scope)
   const bounds = useMemo(() => {
     if (!allStops.length) return { minLng: 90, maxLng: 122, minLat: 27, maxLat: 42 }
     const lngs = allStops.map(({ stop }) => stop.location[0])
@@ -254,26 +270,7 @@ function FallbackMap({
 
   return (
     <div className="fallback-map" aria-label="路线地图备用视图">
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        {roadbook.days.map((day, dayIndex) => {
-          const points = visibleStops(day).map((stop) => {
-            const position = point(stop.location)
-            return `${position.x},${position.y}`
-          })
-          return points.length > 1 ? (
-            <polyline
-              key={day.id}
-              points={points.join(' ')}
-              fill="none"
-              stroke={DAY_COLORS[dayIndex % DAY_COLORS.length]}
-              strokeOpacity={day.id === activeDayId ? 0.9 : 0.35}
-              strokeWidth={day.id === activeDayId ? 1.2 : 0.7}
-              vectorEffect="non-scaling-stroke"
-            />
-          ) : null
-        })}
-      </svg>
-      {allStops.map(({ day, dayIndex, stop, stopIndex }) => {
+      {allStops.map(({ dayIndex, stop, stopIndex, relevant }) => {
         const position = point(stop.location)
         return (
           <button
@@ -285,7 +282,7 @@ function FallbackMap({
                 left: `${position.x}%`,
                 top: `${position.y}%`,
                 '--marker-color': DAY_COLORS[dayIndex % DAY_COLORS.length],
-                opacity: day.id === activeDayId ? 1 : 0.65,
+                opacity: relevant || scope.mode === 'global' ? 1 : 0.65,
               } as React.CSSProperties
             }
             onClick={() => onSelectStop(stop.id)}
@@ -297,7 +294,7 @@ function FallbackMap({
       })}
       <div className="map-error">
         <AlertTriangle size={16} />
-        地图服务暂不可用，已显示路线概览
+        地图服务暂不可用，导航路线未显示
       </div>
     </div>
   )
@@ -310,6 +307,8 @@ export function AmapCanvas({
   onSelectStop,
   onEditStop,
   onRoutesResolved,
+  scope,
+  onScopeChange,
 }: AmapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -320,6 +319,7 @@ export function AmapCanvas({
   const mouseToolRef = useRef<any>(null)
   const generationRef = useRef(0)
   const routeCacheRef = useRef(new Map<string, RouteResult | null>())
+  const endpointRouteCacheRef = useRef(new Map<string, RouteResult>())
   const [mapError, setMapError] = useState(false)
   const [mapReady, setMapReady] = useState(false)
   const [focusMode, setFocusMode] = useState<MapFocusMode>('overview')
@@ -402,34 +402,37 @@ export function AmapCanvas({
     const generation = ++generationRef.current
     const map = mapRef.current
     const AMap = amapRef.current
-    const overlays: any[] = []
-    const activeOverlays: any[] = []
-    const routeOverlays: any[] = []
     const resolvedLegs: ResolvedLeg[] = []
     map.clearMap()
-
-    const routeJobs: Array<{
-      dayId: string
-      dayIndex: number
-      stop: TripStop
-      stopIndex: number
-      previous: TripStop
-      color: string
-      active: boolean
-    }> = []
+    const globalGroups = displayDrivingGroups(roadbook, scope)
+    const relevantGroups = routeGroupsForScope(roadbook, scope)
+    const relevantGroupIds = new Set(relevantGroups.map((group) => group.id))
+    const markerEntries = markerEntriesForScope(roadbook, scope)
+    const selfDriveIds = new Set(markerEntries.map(({ stop }) => stop.id))
+    const relevantStopIds = new Set(
+      markerEntries.filter(({ relevant }) => relevant).map(({ stop }) => stop.id),
+    )
 
     roadbook.days.forEach((day, dayIndex) => {
       const stops = visibleStops(day)
-      const color = DAY_COLORS[dayIndex % DAY_COLORS.length]
-      const isActive = day.id === activeDayId
 
       stops.forEach((stop, stopIndex) => {
+        if (!selfDriveIds.has(stop.id)) return
         const relevant =
           focusMode === 'overview' ||
           focusMode === 'cost' ||
           focusMode === 'driving' ||
           (focusMode === 'scenic' && stop.type === 'scenic') ||
           (focusMode === 'hotel' && stop.type === 'hotel')
+        const emphasizeMarker =
+          relevantStopIds.has(stop.id) &&
+          relevant &&
+          (scope.mode !== 'global' ||
+            (focusMode === 'overview'
+              ? stop.type === 'hotel' || stop.type === 'fuel'
+              : focusMode === 'driving'
+                ? stop.type === 'hotel' || stop.type === 'fuel'
+                : true))
         const typeVisible =
           (stop.type !== 'scenic' || visibility.scenic) &&
           (stop.type !== 'hotel' || visibility.hotels)
@@ -441,11 +444,11 @@ export function AmapCanvas({
               stopIndex,
               stop,
               selected: selectedStopId === stop.id,
-              dimmed: !relevant || !isActive,
+              dimmed: !emphasizeMarker,
               focusMode: focusMode === 'cost' && !visibility.costs ? 'overview' : focusMode,
             }),
             anchor: 'bottom-center',
-            zIndex: selectedStopId === stop.id ? 160 : isActive ? 130 : 110,
+            zIndex: selectedStopId === stop.id ? 160 : emphasizeMarker ? 130 : 110,
             title: stop.name,
           })
           marker.on('click', () => {
@@ -453,11 +456,14 @@ export function AmapCanvas({
             setSelectedElement({ kind: 'stop', dayId: day.id, stopId: stop.id })
           })
           marker.setMap(map)
-          overlays.push(marker)
-          if (isActive) activeOverlays.push(marker)
         }
 
-        if (stopIndex === 0 && visibility.labels && focusMode !== 'cost' && isActive) {
+        if (
+          relevantStopIds.has(stop.id) &&
+          visibility.labels &&
+          focusMode !== 'cost' &&
+          relevantGroups.some((group) => group.stops[0]?.id === stop.id)
+        ) {
           const label = new AMap.Text({
             position: stop.location,
             text: `D${dayIndex + 1} · ${day.title}`,
@@ -474,41 +480,51 @@ export function AmapCanvas({
             },
           })
           label.setMap(map)
-          overlays.push(label)
-          if (isActive) activeOverlays.push(label)
         }
 
-        if (stopIndex > 0 && visibility.routes) {
-          routeJobs.push({
-            dayId: day.id,
-            dayIndex,
-            stop,
-            stopIndex,
-            previous: stops[stopIndex - 1],
-            color,
-            active: isActive,
-          })
-        }
       })
     })
 
     const drawRoutes = async () => {
-      const queue = [...routeJobs]
-      const workers = Array.from({ length: 3 }, async () => {
+      if (!visibility.routes) return
+      const queue = [...globalGroups].sort(
+        (left, right) =>
+          Number(relevantGroupIds.has(right.id)) - Number(relevantGroupIds.has(left.id)),
+      )
+      const workers = Array.from({ length: 1 }, async () => {
         while (queue.length && generationRef.current === generation) {
-          const job = queue.shift()
-          if (!job) break
-          const { dayId, stop, previous, color, active } = job
-          const mode = stop.legFromPrevious?.mode || 'driving'
-          const fallback = estimateLeg(previous.location, stop.location, mode)
-          const cacheKey = `${previous.location.join(',')}|${stop.location.join(',')}|${mode}`
+          const group = queue.shift()
+          if (!group) break
+          const { dayId, dayIndex } = group
+          const color = DAY_COLORS[dayIndex % DAY_COLORS.length]
+          const active = scope.mode === 'global' || relevantGroupIds.has(group.id)
+          const cacheKey = group.stops.map((stop) => stop.location.join(',')).join('|')
           let route = routeCacheRef.current.get(cacheKey)
           if (route === undefined) {
-            route = await searchRoute(AMap, previous.location, stop.location, mode).catch(() => null)
+            route = await searchRoute(AMap, group).catch(() => null)
+            if (!route) {
+              await new Promise((resolve) => window.setTimeout(resolve, 550))
+              route = await searchRoute(AMap, group).catch(() => null)
+            }
             routeCacheRef.current.set(cacheKey, route)
           }
+          if (!route) {
+            // AMap can return a four-digit detour for the reverse half of a remote
+            // out-and-back. Reuse only the same day's resolved road geometry.
+            const reverseRoute = endpointRouteCacheRef.current.get(
+              endpointRouteKey(group, true),
+            )
+            if (reverseRoute) {
+              route = {
+                ...reverseRoute,
+                path: [...reverseRoute.path].reverse(),
+              }
+            }
+          }
           if (generationRef.current !== generation) return
-          const path = route?.path?.length ? route.path : [previous.location, stop.location]
+          if (!route?.path?.length) continue
+          endpointRouteCacheRef.current.set(endpointRouteKey(group), route)
+          const path = route.path
           const line = new AMap.Polyline({
             path,
             strokeColor: color,
@@ -518,58 +534,44 @@ export function AmapCanvas({
                 ? 0.18
                 : active || focusMode === 'driving'
                   ? 0.86
-                  : 0.12,
-            strokeStyle:
-              mode === 'walking' || mode === 'transit' || mode === 'train' || mode === 'flight'
-                ? 'dashed'
-                : 'solid',
+                  : 0.42,
+            strokeStyle: 'solid',
             lineJoin: 'round',
             lineCap: 'round',
-            showDir: mode === 'driving' && (active || focusMode === 'driving'),
+            showDir: active || focusMode === 'driving',
             cursor: 'pointer',
             zIndex: active ? 90 : 70,
           })
-          line.on('click', () =>
-            setSelectedElement({
-              kind: 'leg',
-              dayId,
-              stopId: stop.id,
-              fromStopId: previous.id,
-            }),
-          )
-          line.setMap(map)
-          routeOverlays.push(line)
-
-          const distanceKm = route?.distanceKm || fallback.distanceKm
-          const durationMinutes = route?.durationMinutes || fallback.durationMinutes
-          resolvedLegs.push({
-            dayId,
-            stopId: stop.id,
-            fromStopId: previous.id,
-            distanceKm,
-            durationMinutes,
-            tolls: route?.tolls,
-            tollDistanceKm: route?.tollDistanceKm,
-            roadNames: route?.roadNames,
-            tollRoads: route?.tollRoads,
+          line.on('click', () => {
+            if (scope.mode === 'global') onScopeChange({ mode: 'day', dayId })
           })
+          line.setMap(map)
+
+          if (group.stops.length === 2) {
+            resolvedLegs.push({
+              dayId,
+              stopId: group.stops[1].id,
+              fromStopId: group.stops[0].id,
+              distanceKm: route.distanceKm,
+              durationMinutes: route.durationMinutes,
+              tolls: route.tolls,
+              tollDistanceKm: route.tollDistanceKm,
+              roadNames: route.roadNames,
+              tollRoads: route.tollRoads,
+            })
+          }
 
           if (visibility.distances && (active || focusMode === 'driving')) {
-            const middle = path[Math.floor(path.length / 2)]
-            if (middle) {
+            if (scope.mode === 'global') {
+              const middle = path[Math.floor(path.length / 2)]
               const content = document.createElement('button')
               content.type = 'button'
               content.className = 'map-distance-label'
               content.style.setProperty('--route-color', color)
-              content.textContent = `${distanceKm.toFixed(1)} km`
+              content.textContent = `D${dayIndex + 1} · ${route.distanceKm.toFixed(0)} km`
               content.addEventListener('click', (event) => {
                 event.stopPropagation()
-                setSelectedElement({
-                  kind: 'leg',
-                  dayId,
-                  stopId: stop.id,
-                  fromStopId: previous.id,
-                })
+                onScopeChange({ mode: 'day', dayId })
               })
               const distanceLabel = new AMap.Marker({
                 position: middle,
@@ -578,13 +580,50 @@ export function AmapCanvas({
                 zIndex: 120,
               })
               distanceLabel.setMap(map)
-              routeOverlays.push(distanceLabel)
+            } else {
+              group.stops.slice(1).forEach((stop, index) => {
+                const previous = group.stops[index]
+                const midpoint: [number, number] = [
+                  (previous.location[0] + stop.location[0]) / 2,
+                  (previous.location[1] + stop.location[1]) / 2,
+                ]
+                const content = document.createElement('button')
+                content.type = 'button'
+                content.className = 'map-distance-label'
+                content.style.setProperty('--route-color', color)
+                content.textContent = `${(stop.legFromPrevious?.distanceKm || 0).toFixed(1)} km`
+                content.addEventListener('click', (event) => {
+                  event.stopPropagation()
+                  onScopeChange({
+                    mode: 'leg',
+                    dayId,
+                    stopId: stop.id,
+                    fromStopId: previous.id,
+                  })
+                  setSelectedElement({
+                    kind: 'leg',
+                    dayId,
+                    stopId: stop.id,
+                    fromStopId: previous.id,
+                  })
+                })
+                const distanceLabel = new AMap.Marker({
+                  position: midpoint,
+                  anchor: 'center',
+                  content,
+                  zIndex: 120,
+                })
+                distanceLabel.setMap(map)
+              })
             }
           }
+          await new Promise((resolve) => window.setTimeout(resolve, 180))
         }
       })
       await Promise.all(workers)
-      if (generationRef.current === generation) onRoutesResolved(resolvedLegs)
+      if (generationRef.current === generation && scope.mode === 'leg') {
+        onRoutesResolved(resolvedLegs)
+      }
     }
 
     void drawRoutes()
@@ -618,18 +657,28 @@ export function AmapCanvas({
               title: station.name,
             })
             marker.setMap(map)
-            overlays.push(marker)
           })
           await new Promise((resolve) => window.setTimeout(resolve, 220))
         }
       })()
     }
 
-    const fitOverlays = activeOverlays.length ? activeOverlays : overlays
-    if (fitOverlays.length) {
+    const fitStops = relevantGroups.flatMap((group) => group.stops)
+    const fitLocations = (fitStops.length ? fitStops : markerEntries.map(({ stop }) => stop))
+      .map((stop) => stop.location)
+    if (fitLocations.length) {
       window.setTimeout(() => {
         if (generationRef.current === generation) {
-          map.setFitView(fitOverlays, false, [95, 80, 80, 95], 15)
+          const lngs = fitLocations.map(([lng]) => lng)
+          const lats = fitLocations.map(([, lat]) => lat)
+          const southWest = new AMap.LngLat(Math.min(...lngs), Math.min(...lats))
+          const northEast = new AMap.LngLat(Math.max(...lngs), Math.max(...lats))
+          map.setBounds(
+            new AMap.Bounds(southWest, northEast),
+            true,
+            [95, 80, 80, 95],
+          )
+          if (map.getZoom() > 15) map.setZoom(15)
         }
       }, 120)
     }
@@ -645,7 +694,9 @@ export function AmapCanvas({
     mapReady,
     onRoutesResolved,
     onSelectStop,
+    onScopeChange,
     roadbook,
+    scope,
     selectedStopId,
     visibility.costs,
     visibility.distances,
@@ -679,9 +730,9 @@ export function AmapCanvas({
       {mapError ? (
         <FallbackMap
           roadbook={roadbook}
-          activeDayId={activeDayId}
           selectedStopId={selectedStopId}
           onSelectStop={onSelectStop}
+          scope={scope}
         />
       ) : null}
       {!mapReady && !mapError ? (
@@ -781,9 +832,9 @@ export function AmapCanvas({
 
       <div className="map-summary">
         <MapPinned size={16} />
-        <strong>{roadbook.days.length}</strong> 天
+        <strong>{scopeLabel(roadbook, scope)}</strong>
         <span />
-        驾车 <strong>{totalDrivingDistance(roadbook).toFixed(0)}</strong> 公里
+        驾车 <strong>{scopeDrivingDistance(roadbook, scope).toFixed(0)}</strong> 公里
         {focusMode === 'cost' ? (
           <>
             <span />

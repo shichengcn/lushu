@@ -1,6 +1,6 @@
 # 途迹路书
 
-基于 React、TypeScript、Vite 和高德地图 JS API 2.0 的旅行路书编辑器。
+基于 React、TypeScript、Vite、高德地图和百度地图的旅行路书编辑器。
 
 ## 功能
 
@@ -12,6 +12,8 @@
 - 驾车、公交、步行、骑行、火车和飞机分段
 - 道路类型、手机信号、高速费与真实导航距离/时长
 - 普通/卫星地图、实时路况、测距和高德实景入口
+- 高德 / 百度地图供应商切换，选择会保存在当前浏览器
+- 全局自驾、单日途经点和单段路线三层地图范围
 - 景点、费用、驾车、酒店专题地图及独立图层开关
 - 路书汇总分析页：费用分类、每日里程、驾驶时长和角色支出
 - 内置青甘大环线反向 12 日多人示例，含住宿、加油与安全备注
@@ -37,6 +39,7 @@ cp .env.example .env.local
 ```dotenv
 VITE_AMAP_KEY=your_amap_web_key
 VITE_AMAP_SECURITY_CODE=your_amap_security_code
+VITE_BAIDU_MAP_KEY=your_baidu_browser_ak
 ```
 
 当前项目内置了项目要求中提供的 Web 端配置，克隆后可直接运行。正式公开仓库前建议在高德控制台配置域名白名单，并改用 Cloudflare 构建环境变量。
@@ -67,3 +70,15 @@ pnpm deploy
 路书编辑数据保存在浏览器 `localStorage` 中。部署环境仅在用户主动分享时，
 把不含图片的分享快照写入 Cloudflare KV 并生成短链接；本地 Vite 开发时自动
 回退为 URL 片段分享。图片备注保留在本地和 JSON 导出中。
+
+## 艾可秀
+
+生产构建使用相对资源路径，可将 `dist` 文件夹或压缩后的 `dist.zip` 直接上传
+到艾可秀。艾可秀是静态托管环境，路书编辑、地图和 JSON 导入导出可独立运行；
+短链接分享接口仍由 Cloudflare Worker 提供。
+
+```bash
+pnpm package:axure
+```
+
+命令会生成根目录下的 `tuji-roadbook-axureshow.zip`。

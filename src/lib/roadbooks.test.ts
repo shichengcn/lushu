@@ -15,6 +15,13 @@ import {
   totalCost,
   totalDistance,
 } from '@/lib/roadbooks'
+import {
+  globalDrivingGroups,
+  isPlausibleRouteDistance,
+  markerEntriesForScope,
+  routeGroupsForScope,
+} from '@/lib/map-routes'
+import { gcj02ToBd09 } from '@/lib/baidu'
 
 const storage = new Map<string, string>()
 Object.defineProperty(globalThis, 'localStorage', {
@@ -118,5 +125,64 @@ describe('roadbook data helpers', () => {
       '2027-01-31',
       '2027-02-01',
     ])
+  })
+
+  it('builds a Xining-to-Xining global self-driving route', () => {
+    const groups = globalDrivingGroups(qingganRoadbook)
+    const names = groups.flatMap((group) => group.stops.map((stop) => stop.name))
+
+    expect(names[0]).toBe('西宁曹家堡国际机场')
+    expect(names.at(-1)).toBe('西宁曹家堡国际机场')
+    expect(names).not.toContain('上海虹桥站')
+    expect(names).not.toContain('长沙黄花国际机场')
+    expect(groups.every((group) => group.stops.length >= 2)).toBe(true)
+  })
+
+  it('rejects implausible navigation detours instead of drawing a false route', () => {
+    const returnGroup = globalDrivingGroups(qingganRoadbook).find(
+      (group) =>
+        group.dayId === 'qg-day-10' &&
+        group.stops[0].id === 'qg-sonamdajie',
+    )
+
+    expect(returnGroup).toBeDefined()
+    expect(isPlausibleRouteDistance(returnGroup!, 159)).toBe(true)
+    expect(isPlausibleRouteDistance(returnGroup!, 1224.7)).toBe(false)
+  })
+
+  it('limits day and leg scopes to their ordered driving stops', () => {
+    const dayScope = { mode: 'day' as const, dayId: 'qg-day-2' }
+    const dayGroups = routeGroupsForScope(qingganRoadbook, dayScope)
+    const legScope = {
+      mode: 'leg' as const,
+      dayId: 'qg-day-2',
+      fromStopId: 'qg-xining-start',
+      stopId: 'qg-menyuan',
+    }
+    const legGroups = routeGroupsForScope(qingganRoadbook, legScope)
+
+    expect(dayGroups).toHaveLength(1)
+    expect(dayGroups[0].stops.map((stop) => stop.id)).toEqual([
+      'qg-xining-start',
+      'qg-menyuan',
+      'qg-zhuoer',
+      'qg-qilian-hotel',
+    ])
+    expect(legGroups[0].stops.map((stop) => stop.id)).toEqual([
+      'qg-xining-start',
+      'qg-menyuan',
+    ])
+    expect(markerEntriesForScope(qingganRoadbook, dayScope).some((entry) => entry.relevant)).toBe(
+      true,
+    )
+  })
+
+  it('converts GCJ-02 coordinates for Baidu without mutating source data', () => {
+    const source: [number, number] = [116.397451, 39.909187]
+    const converted = gcj02ToBd09(source)
+
+    expect(source).toEqual([116.397451, 39.909187])
+    expect(converted[0]).toBeGreaterThan(source[0])
+    expect(converted[1]).toBeGreaterThan(source[1])
   })
 })

@@ -129,13 +129,17 @@ export function useRoadbookController() {
 
   const updateRoadbook = useCallback(
     (transform: (roadbook: Roadbook) => Roadbook, touch = true) => {
-      setRoadbooks((current) =>
-        current.map((roadbook) => {
+      setRoadbooks((current) => {
+        let changed = false
+        const next = current.map((roadbook) => {
           if (roadbook.id !== activeRoadbookId) return roadbook
           const updated = transform(roadbook)
+          if (!touch && updated === roadbook) return roadbook
+          changed = true
           return touch ? { ...updated, updatedAt: new Date().toISOString() } : updated
-        }),
-      )
+        })
+        return changed ? next : current
+      })
     },
     [activeRoadbookId],
   )

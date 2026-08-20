@@ -114,6 +114,13 @@ export interface PlaceSuggestion {
 
 export type MapBaseLayer = 'standard' | 'satellite'
 
+export type MapProvider = 'amap' | 'baidu'
+
+export type MapScope =
+  | { mode: 'global' }
+  | { mode: 'day'; dayId: string }
+  | { mode: 'leg'; dayId: string; stopId: string; fromStopId: string }
+
 export type MapFocusMode = 'overview' | 'scenic' | 'cost' | 'driving' | 'hotel'
 
 export interface MapVisibility {

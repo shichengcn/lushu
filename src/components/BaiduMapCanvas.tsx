@@ -1,0 +1,602 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  BedDouble,
+  Car,
+  CircleDollarSign,
+  Eye,
+  LocateFixed,
+  Map as MapIcon,
+  MapPinned,
+  Navigation,
+  Satellite,
+  TrafficCone,
+  X,
+} from 'lucide-react'
+import {
+  buildBaiduNavigationUrl,
+  buildBaiduPlaceUrl,
+  gcj02ToBd09,
+  loadBaiduMap,
+} from '@/lib/baidu'
+import {
+  displayDrivingGroups,
+  isPlausibleRouteDistance,
+  markerEntriesForScope,
+  routeGroupsForScope,
+  scopeDrivingDistance,
+  scopeLabel,
+  type RouteGroup,
+} from '@/lib/map-routes'
+import {
+  DAY_COLORS,
+  legCost,
+  stopCost,
+  totalCost,
+} from '@/lib/roadbooks'
+import type {
+  MapBaseLayer,
+  MapFocusMode,
+  MapScope,
+  ResolvedLeg,
+  Roadbook,
+  TripStop,
+} from '@/types'
+
+interface BaiduMapCanvasProps {
+  roadbook: Roadbook
+  activeDayId: string
+  selectedStopId: string | null
+  scope: MapScope
+  onScopeChange: (scope: MapScope) => void
+  onSelectStop: (stopId: string) => void
+  onEditStop: (stop: TripStop, previousStop: TripStop | null, dayId: string) => void
+  onRoutesResolved: (legs: ResolvedLeg[]) => void
+}
+
+interface BaiduRouteResult {
+  path: any[]
+  distanceKm: number
+  durationMinutes: number
+  roadNames: string[]
+}
+
+interface SelectedElement {
+  kind: 'stop' | 'leg'
+  dayId: string
+  stopId: string
+  fromStopId?: string
+}
+
+const focusModes: Array<{ value: MapFocusMode; label: string; icon: typeof MapIcon }> = [
+  { value: 'overview', label: '总览', icon: MapIcon },
+  { value: 'scenic', label: '景点', icon: MapPinned },
+  { value: 'cost', label: '费用', icon: CircleDollarSign },
+  { value: 'driving', label: '驾车', icon: Car },
+  { value: 'hotel', label: '酒店', icon: BedDouble },
+]
+
+function stopLabel(stop: TripStop, index: number, focusMode: MapFocusMode) {
+  if (focusMode === 'cost') {
+    return `${index + 1}  ${stop.name}  ¥${stopCost(stop).toLocaleString('zh-CN')}`
+  }
+  return `${index + 1}  ${stop.name}`
+}
+
+function searchBaiduRoute(BMapGL: any, map: any, group: RouteGroup) {
+  return new Promise<BaiduRouteResult | null>((resolve) => {
+    const points = group.stops.map((stop) => {
+      const [lng, lat] = gcj02ToBd09(stop.location)
+      return new BMapGL.Point(lng, lat)
+    })
+    if (points.length < 2) {
+      resolve(null)
+      return
+    }
+    let service: any
+    service = new BMapGL.DrivingRoute(map, {
+      onSearchComplete: (results: any) => {
+        if (service.getStatus() !== 0 || !results?.getPlan?.(0)) {
+          resolve(null)
+          return
+        }
+        const plan = results.getPlan(0)
+        const path: any[] = []
+        const roadNames = new Set<string>()
+        const routeCount = Math.max(1, plan.getNumRoutes?.() || 1)
+        for (let index = 0; index < routeCount; index += 1) {
+          const route = plan.getRoute(index)
+          route?.getPath?.().forEach((point: any) => path.push(point))
+          const stepCount = route?.getNumSteps?.() || 0
+          for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
+            const description = String(route.getStep(stepIndex)?.getDescription?.() || '')
+            const match = description.match(/(?:进入|沿|驶入)([^，。<]+)/)
+            if (match?.[1]) roadNames.add(match[1].replace(/<[^>]+>/g, '').trim())
+          }
+        }
+        const distanceKm = Number(((plan.getDistance?.(false) || 0) / 1000).toFixed(1))
+        if (!isPlausibleRouteDistance(group, distanceKm)) {
+          resolve(null)
+          return
+        }
+        resolve({
+          path,
+          distanceKm,
+          durationMinutes: Math.max(1, Math.round((plan.getDuration?.(false) || 0) / 60)),
+          roadNames: [...roadNames].slice(0, 8),
+        })
+      },
+    })
+    service.search(points[0], points.at(-1), { waypoints: points.slice(1, -1) })
+  })
+}
+
+function fitPoints(BMapGL: any, map: any, stops: TripStop[]) {
+  const points = stops.map((stop) => {
+    const [lng, lat] = gcj02ToBd09(stop.location)
+    return new BMapGL.Point(lng, lat)
+  })
+  if (points.length) map.setViewport(points, { margins: [90, 90, 90, 90] })
+}
+
+export function BaiduMapCanvas({
+  roadbook,
+  activeDayId,
+  selectedStopId,
+  scope,
+  onScopeChange,
+  onSelectStop,
+  onEditStop,
+  onRoutesResolved,
+}: BaiduMapCanvasProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const mapRef = useRef<any>(null)
+  const baiduRef = useRef<any>(null)
+  const generationRef = useRef(0)
+  const routeCacheRef = useRef(new Map<string, BaiduRouteResult | null>())
+  const measurePointsRef = useRef<any[]>([])
+  const [mapReady, setMapReady] = useState(false)
+  const [mapError, setMapError] = useState('')
+  const [focusMode, setFocusMode] = useState<MapFocusMode>('overview')
+  const [baseLayer, setBaseLayer] = useState<MapBaseLayer>('standard')
+  const [traffic, setTraffic] = useState(false)
+  const [measuring, setMeasuring] = useState(false)
+  const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null)
+
+  const selectedDay = selectedElement
+    ? roadbook.days.find((day) => day.id === selectedElement.dayId)
+    : null
+  const selectedStop = selectedDay?.stops.find((stop) => stop.id === selectedElement?.stopId)
+  const selectedFrom = selectedDay?.stops.find((stop) => stop.id === selectedElement?.fromStopId)
+  const markerEntries = useMemo(
+    () => markerEntriesForScope(roadbook, scope),
+    [roadbook, scope],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    loadBaiduMap()
+      .then((BMapGL) => {
+        if (cancelled || !containerRef.current) return
+        const map = new BMapGL.Map(containerRef.current)
+        map.centerAndZoom(new BMapGL.Point(101.784, 36.623), 9)
+        map.enableScrollWheelZoom(true)
+        map.addControl(new BMapGL.ScaleControl({ anchor: BMapGL.BMAP_ANCHOR_BOTTOM_LEFT }))
+        map.addControl(new BMapGL.ZoomControl({ anchor: BMapGL.BMAP_ANCHOR_BOTTOM_RIGHT }))
+        baiduRef.current = BMapGL
+        mapRef.current = map
+        setMapReady(true)
+      })
+      .catch((error) => setMapError(error instanceof Error ? error.message : '百度地图加载失败'))
+    return () => {
+      cancelled = true
+      mapRef.current?.destroy?.()
+      mapRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const BMapGL = baiduRef.current
+    const map = mapRef.current
+    if (!mapReady || !BMapGL || !map) return
+    map.setMapType(
+      baseLayer === 'satellite' ? BMapGL.BMAP_SATELLITE_MAP : BMapGL.BMAP_NORMAL_MAP,
+    )
+    if (traffic) map.setTrafficOn?.()
+    else map.setTrafficOff?.()
+  }, [baseLayer, mapReady, traffic])
+
+  useEffect(() => {
+    const BMapGL = baiduRef.current
+    const map = mapRef.current
+    if (!mapReady || !BMapGL || !map) return
+    const handler = (event: any) => {
+      if (!measuring) return
+      measurePointsRef.current.push(event.latlng)
+      const points = measurePointsRef.current
+      if (points.length > 1) {
+        const segment = [points.at(-2), points.at(-1)]
+        map.addOverlay(
+          new BMapGL.Polyline(segment, {
+            strokeColor: '#172c36',
+            strokeWeight: 3,
+            strokeOpacity: 0.85,
+            strokeStyle: 'dashed',
+          }),
+        )
+        const distance = map.getDistance(segment[0], segment[1])
+        const label = new BMapGL.Label(`${(distance / 1000).toFixed(2)} km`, {
+          position: segment[1],
+          offset: new BMapGL.Size(8, -10),
+        })
+        label.setStyle({
+          border: '1px solid #172c36',
+          borderRadius: '3px',
+          padding: '3px 5px',
+          fontSize: '11px',
+          color: '#172c36',
+        })
+        map.addOverlay(label)
+      }
+    }
+    map.addEventListener('click', handler)
+    if (!measuring) measurePointsRef.current = []
+    return () => map.removeEventListener('click', handler)
+  }, [mapReady, measuring])
+
+  useEffect(() => {
+    const BMapGL = baiduRef.current
+    const map = mapRef.current
+    if (!mapReady || !BMapGL || !map) return
+    const generation = ++generationRef.current
+    map.clearOverlays()
+    const relevantGroups = routeGroupsForScope(roadbook, scope)
+    const relevantGroupIds = new Set(relevantGroups.map((group) => group.id))
+    const allGroups = displayDrivingGroups(roadbook, scope)
+
+    markerEntries.forEach(({ day, dayIndex, stop, stopIndex, relevant }) => {
+      const [lng, lat] = gcj02ToBd09(stop.location)
+      const point = new BMapGL.Point(lng, lat)
+      const marker = new BMapGL.Marker(point)
+      marker.setTitle(stop.name)
+      marker.addEventListener('click', () => {
+        onSelectStop(stop.id)
+        setSelectedElement({
+          kind: 'stop',
+          dayId: roadbook.days[dayIndex].id,
+          stopId: stop.id,
+        })
+      })
+      map.addOverlay(marker)
+      const selected = selectedStopId === stop.id
+      const focused =
+        (relevant || day.id === activeDayId) &&
+        (focusMode === 'overview' ||
+          focusMode === 'cost' ||
+          focusMode === 'driving' ||
+          (focusMode === 'scenic' && stop.type === 'scenic') ||
+          (focusMode === 'hotel' && stop.type === 'hotel')) &&
+        (scope.mode !== 'global' ||
+          (focusMode === 'overview' || focusMode === 'driving'
+            ? stop.type === 'hotel' || stop.type === 'fuel'
+            : true))
+      const label = new BMapGL.Label(stopLabel(stop, stopIndex, focusMode), {
+        position: point,
+        offset: new BMapGL.Size(13, -35),
+      })
+      label.setStyle({
+        border: `${selected ? 2 : 1}px solid ${
+          focused ? DAY_COLORS[dayIndex % DAY_COLORS.length] : '#9da8b1'
+        }`,
+        borderRadius: '4px',
+        background: '#fff',
+        color: '#26313f',
+        fontSize: '11px',
+        padding: '4px 7px',
+        opacity: focused ? '1' : '0.7',
+        boxShadow: selected
+          ? '0 0 0 3px rgba(16,167,162,.2)'
+          : focused
+            ? '0 3px 10px rgba(20,35,48,.18)'
+            : 'none',
+      })
+      label.addEventListener('click', () => {
+        onSelectStop(stop.id)
+        setSelectedElement({
+          kind: 'stop',
+          dayId: roadbook.days[dayIndex].id,
+          stopId: stop.id,
+        })
+      })
+      if (focused) map.addOverlay(label)
+    })
+
+    const draw = async () => {
+      const resolved: ResolvedLeg[] = []
+      const queue = [...allGroups].sort(
+        (left, right) =>
+          Number(relevantGroupIds.has(right.id)) - Number(relevantGroupIds.has(left.id)),
+      )
+      for (const group of queue) {
+        if (generationRef.current !== generation) return
+        const cacheKey = group.stops.map((stop) => stop.location.join(',')).join('|')
+        let result = routeCacheRef.current.get(cacheKey)
+        if (result === undefined) {
+          result = await searchBaiduRoute(BMapGL, map, group).catch(() => null)
+          routeCacheRef.current.set(cacheKey, result)
+        }
+        if (!result?.path.length || generationRef.current !== generation) continue
+        const active = scope.mode === 'global' || relevantGroupIds.has(group.id)
+        const color = DAY_COLORS[group.dayIndex % DAY_COLORS.length]
+        const line = new BMapGL.Polyline(result.path, {
+          strokeColor: color,
+          strokeWeight: active ? 7 : 4,
+          strokeOpacity: active ? 0.9 : 0.48,
+        })
+        line.addEventListener('click', () => {
+          if (scope.mode === 'global') {
+            onScopeChange({ mode: 'day', dayId: group.dayId })
+          }
+        })
+        map.addOverlay(line)
+        const labelPairs: Array<{
+          stop: TripStop
+          previous: TripStop
+          text: string
+          daySummary: boolean
+        }> = []
+        if (scope.mode === 'global') {
+          labelPairs.push({
+            stop: group.stops.at(-1)!,
+            previous: group.stops[0],
+            text: `D${group.dayIndex + 1} · ${result.distanceKm.toFixed(0)} km`,
+            daySummary: true,
+          })
+        } else if (active) {
+          labelPairs.push(
+            ...group.stops.slice(1).map((stop, index) => ({
+              stop,
+              previous: group.stops[index],
+              text: `${(stop.legFromPrevious?.distanceKm || 0).toFixed(1)} km`,
+              daySummary: false,
+            })),
+          )
+        }
+        labelPairs.forEach(({ stop, previous, text, daySummary }) => {
+          const midpoint: [number, number] = [
+            (previous.location[0] + stop.location[0]) / 2,
+            (previous.location[1] + stop.location[1]) / 2,
+          ]
+          const [labelLng, labelLat] = gcj02ToBd09(midpoint)
+          const label = new BMapGL.Label(text, {
+            position: new BMapGL.Point(labelLng, labelLat),
+          })
+          label.setStyle({
+            border: `1px solid ${color}`,
+            borderRadius: '4px',
+            background: '#fff',
+            color,
+            cursor: 'pointer',
+            fontSize: '10px',
+            padding: '3px 5px',
+            opacity: active ? '1' : '0.66',
+          })
+          label.addEventListener('click', () => {
+            if (daySummary) {
+              onScopeChange({ mode: 'day', dayId: group.dayId })
+              return
+            }
+            const nextScope: MapScope = {
+              mode: 'leg',
+              dayId: group.dayId,
+              stopId: stop.id,
+              fromStopId: previous.id,
+            }
+            onScopeChange(nextScope)
+            setSelectedElement({
+              kind: 'leg',
+              dayId: group.dayId,
+              stopId: stop.id,
+              fromStopId: previous.id,
+            })
+          })
+          map.addOverlay(label)
+        })
+        if (group.stops.length === 2) {
+          resolved.push({
+            dayId: group.dayId,
+            fromStopId: group.stops[0].id,
+            stopId: group.stops[1].id,
+            distanceKm: result.distanceKm,
+            durationMinutes: result.durationMinutes,
+            roadNames: result.roadNames,
+          })
+        }
+      }
+      if (generationRef.current === generation && scope.mode === 'leg') {
+        onRoutesResolved(resolved)
+      }
+    }
+    void draw()
+
+    const fitStops = relevantGroups.flatMap((group) => group.stops)
+    fitPoints(BMapGL, map, fitStops.length ? fitStops : markerEntries.map(({ stop }) => stop))
+    return () => {
+      if (generationRef.current === generation) generationRef.current += 1
+    }
+  }, [
+    activeDayId,
+    focusMode,
+    mapReady,
+    markerEntries,
+    onRoutesResolved,
+    onScopeChange,
+    onSelectStop,
+    roadbook,
+    selectedStopId,
+    scope,
+  ])
+
+  const selectedRelevantFrom = selectedFrom || null
+  const openPlace = () => {
+    if (selectedStop) {
+      window.open(buildBaiduPlaceUrl(selectedStop), '_blank', 'noopener,noreferrer')
+    }
+  }
+  const openRoute = () => {
+    if (selectedRelevantFrom && selectedStop) {
+      window.open(
+        buildBaiduNavigationUrl(selectedRelevantFrom, selectedStop),
+        '_blank',
+        'noopener,noreferrer',
+      )
+    }
+  }
+
+  return (
+    <section className="map-shell baidu-map-shell" aria-label="百度路书地图">
+      <div className="map-canvas" ref={containerRef} />
+      {!mapReady && !mapError ? (
+        <div className="map-loading">
+          <LocateFixed size={20} />
+          正在载入百度地图
+        </div>
+      ) : null}
+      {mapError ? (
+        <div className="map-error">
+          <LocateFixed size={16} />
+          {mapError}
+        </div>
+      ) : null}
+
+      <div className="map-focus-bar" aria-label="地图专题">
+        {focusModes.map((mode) => {
+          const Icon = mode.icon
+          return (
+            <button
+              type="button"
+              key={mode.value}
+              className={focusMode === mode.value ? 'is-active' : ''}
+              onClick={() => setFocusMode(mode.value)}
+            >
+              <Icon size={15} />
+              {mode.label}
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="map-tools">
+        <button
+          type="button"
+          className={baseLayer === 'satellite' ? 'is-active' : ''}
+          onClick={() =>
+            setBaseLayer((current) => (current === 'standard' ? 'satellite' : 'standard'))
+          }
+          title="普通 / 卫星地图"
+        >
+          <Satellite size={17} />
+        </button>
+        <button
+          type="button"
+          className={traffic ? 'is-active' : ''}
+          onClick={() => setTraffic((current) => !current)}
+          title="实时路况"
+        >
+          <TrafficCone size={17} />
+        </button>
+        <button
+          type="button"
+          className={measuring ? 'is-active' : ''}
+          onClick={() => setMeasuring((current) => !current)}
+          title="测距"
+        >
+          <MapPinned size={17} />
+        </button>
+        <button type="button" disabled={!selectedStop} onClick={openPlace} title="百度地图地点">
+          <Eye size={17} />
+        </button>
+      </div>
+
+      <div className="map-summary">
+        <MapPinned size={16} />
+        <strong>{scopeLabel(roadbook, scope)}</strong>
+        <span />
+        驾车 <strong>{scopeDrivingDistance(roadbook, scope).toFixed(0)}</strong> 公里
+        {focusMode === 'cost' ? (
+          <>
+            <span />
+            <strong>¥{totalCost(roadbook).toLocaleString('zh-CN')}</strong>
+          </>
+        ) : null}
+      </div>
+
+      {selectedElement && selectedStop && selectedDay ? (
+        <aside className="map-detail-panel">
+          <button
+            type="button"
+            className="map-detail-close"
+            onClick={() => setSelectedElement(null)}
+            aria-label="关闭地图详情"
+          >
+            <X size={16} />
+          </button>
+          <span className="map-detail-kicker">
+            {selectedElement.kind === 'leg' ? 'BAIDU ROUTE' : 'BAIDU PLACE'}
+          </span>
+          <h3>
+            {selectedElement.kind === 'leg' && selectedRelevantFrom
+              ? `${selectedRelevantFrom.name} → ${selectedStop.name}`
+              : selectedStop.name}
+          </h3>
+          <p className="map-detail-address">{selectedStop.address}</p>
+          {selectedElement.kind === 'leg' && selectedRelevantFrom ? (
+            <>
+              <div className="map-detail-metrics">
+                <span>
+                  <strong>{selectedStop.legFromPrevious?.distanceKm.toFixed(1)}</strong> km
+                </span>
+                <span>
+                  <strong>{selectedStop.legFromPrevious?.durationMinutes}</strong> 分钟
+                </span>
+                <span>
+                  <strong>¥{legCost(selectedStop.legFromPrevious)}</strong> 路段费
+                </span>
+              </div>
+              <button type="button" className="map-detail-primary" onClick={openRoute}>
+                <Navigation size={15} />
+                在百度查看导航
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="map-detail-metrics">
+                <span>
+                  <strong>{selectedStop.arrivalTime}</strong> 到达
+                </span>
+                <span>
+                  <strong>{selectedStop.stayMinutes}</strong> 分钟
+                </span>
+                <span>
+                  <strong>¥{stopCost(selectedStop)}</strong> 费用
+                </span>
+              </div>
+              <button type="button" className="map-detail-primary" onClick={openPlace}>
+                <Eye size={15} />
+                百度地图地点
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="map-detail-edit"
+            onClick={() =>
+              onEditStop(selectedStop, selectedRelevantFrom, selectedDay.id)
+            }
+          >
+            编辑详情
+          </button>
+        </aside>
+      ) : null}
+    </section>
+  )
+}
