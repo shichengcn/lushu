@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:worker": "pnpm build && wrangler dev --local",
     "build": "tsc -b && vite build",
     "deploy": "pnpm build && wrangler deploy",
-    "lint": "oxlint src/App.tsx src/main.tsx src/types.ts src/lib src/components/AmapCanvas.tsx src/components/ItineraryPanel.tsx src/components/PlaceEditorDialog.tsx src/components/ShareDialog.tsx src/components/TripLibraryDialog.tsx",
+    "lint": "oxlint worker.js src/App.tsx src/main.tsx src/types.ts src/lib src/hooks/use-roadbook-controller.ts src/components/AmapCanvas.tsx src/components/AnalyticsDashboard.tsx src/components/ItineraryPanel.tsx src/components/PlaceEditorDialog.tsx src/components/ShareDialog.tsx src/components/TripLibraryDialog.tsx",
     "test": "vitest run",
     "preview": "vite preview"
   },
@@ -54,6 +55,7 @@
     "react-dom": "^19.2.8",
     "react-hook-form": "^7.85.0",
     "react-resizable-panels": "^4.12.3",
+    "recharts": "^3.10.1",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.6.0",
     "vaul": "^1.1.2",

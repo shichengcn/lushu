@@ -1,11 +1,72 @@
-export type PlaceType = 'scenic' | 'food' | 'hotel' | 'transport' | 'other'
+export type PlaceType =
+  | 'scenic'
+  | 'food'
+  | 'hotel'
+  | 'transport'
+  | 'fuel'
+  | 'other'
 
-export type TransportMode = 'driving' | 'walking' | 'transit' | 'cycling'
+export type TransportMode =
+  | 'driving'
+  | 'walking'
+  | 'transit'
+  | 'cycling'
+  | 'train'
+  | 'flight'
+
+export type ExpenseCategory =
+  | 'ticket'
+  | 'meal'
+  | 'hotel'
+  | 'transport'
+  | 'fuel'
+  | 'toll'
+  | 'rental'
+  | 'shopping'
+  | 'other'
+
+export type RoadType =
+  | 'highway'
+  | 'national'
+  | 'provincial'
+  | 'county'
+  | 'unpaved'
+  | 'mixed'
+  | 'unknown'
+
+export type SignalLevel = 'good' | 'weak' | 'none' | 'unknown'
+
+export interface ExpenseItem {
+  id: string
+  label: string
+  amount: number
+  category: ExpenseCategory
+  payerId?: string
+}
+
+export interface TripNote {
+  id: string
+  text: string
+  imageDataUrl?: string
+  createdAt: string
+}
+
+export interface Traveler {
+  id: string
+  name: string
+  color: string
+}
 
 export interface TripLeg {
   mode: TransportMode
   distanceKm: number
   durationMinutes: number
+  roadType: RoadType
+  signal: SignalLevel
+  expenses: ExpenseItem[]
+  notes: TripNote[]
+  roadNames?: string[]
+  tollRoads?: string[]
 }
 
 export interface TripStop {
@@ -17,8 +78,10 @@ export interface TripStop {
   arrivalTime: string
   departureTime: string
   stayMinutes: number
-  cost: number
-  notes: string
+  hidden: boolean
+  expenses: ExpenseItem[]
+  notes: TripNote[]
+  participantIds: string[]
   legFromPrevious?: TripLeg
 }
 
@@ -35,6 +98,7 @@ export interface Roadbook {
   summary: string
   startDate: string
   endDate: string
+  travelers: Traveler[]
   days: TripDay[]
   createdAt: string
   updatedAt: string
@@ -46,4 +110,31 @@ export interface PlaceSuggestion {
   address: string
   location: [number, number]
   type?: string
+}
+
+export type MapBaseLayer = 'standard' | 'satellite'
+
+export type MapFocusMode = 'overview' | 'scenic' | 'cost' | 'driving' | 'hotel'
+
+export interface MapVisibility {
+  routes: boolean
+  distances: boolean
+  scenic: boolean
+  hotels: boolean
+  costs: boolean
+  fuel: boolean
+  labels: boolean
+  traffic: boolean
+}
+
+export interface ResolvedLeg {
+  dayId: string
+  stopId: string
+  fromStopId: string
+  distanceKm: number
+  durationMinutes: number
+  tolls?: number
+  tollDistanceKm?: number
+  roadNames?: string[]
+  tollRoads?: string[]
 }

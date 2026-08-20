@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { buildShareUrl } from '@/lib/roadbooks'
+import { createShareUrl } from '@/lib/sharing'
 import type { Roadbook } from '@/types'
 
 interface ShareDialogProps {
@@ -20,12 +21,26 @@ interface ShareDialogProps {
 }
 
 export function ShareDialog({ open, roadbook, onOpenChange }: ShareDialogProps) {
+  const [shareUrl, setShareUrl] = useState(() => buildShareUrl(roadbook))
   const [copied, setCopied] = useState(false)
+  const [preparing, setPreparing] = useState(true)
   const qrCanvasRef = useRef<HTMLCanvasElement>(null)
-  const shareUrl = buildShareUrl(roadbook)
 
   useEffect(() => {
     if (!open) return
+    let cancelled = false
+    void createShareUrl(roadbook).then((url) => {
+      if (cancelled) return
+      setShareUrl(url)
+      setPreparing(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open, roadbook])
+
+  useEffect(() => {
+    if (!open || preparing) return
     window.setTimeout(() => {
       if (!qrCanvasRef.current) return
       void QRCode.toCanvas(qrCanvasRef.current, shareUrl, {
@@ -47,7 +62,7 @@ export function ShareDialog({ open, roadbook, onOpenChange }: ShareDialogProps) 
         context.fillText('链接较长，请复制后分享', 110, 110)
       })
     }, 0)
-  }, [open, shareUrl])
+  }, [open, preparing, shareUrl])
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(shareUrl)
@@ -87,8 +102,8 @@ export function ShareDialog({ open, roadbook, onOpenChange }: ShareDialogProps) 
         <div className="share-layout">
           <div className="qr-panel">
             <canvas ref={qrCanvasRef} aria-label={`${roadbook.title}分享二维码`} />
-            <strong>微信扫码查看</strong>
-            <span>也可长按转发到朋友圈</span>
+            <strong>{preparing ? '正在生成分享链接' : '微信扫码查看'}</strong>
+            <span>{preparing ? '正在保存当前路书' : '也可长按转发到朋友圈'}</span>
           </div>
 
           <div className="share-actions">
@@ -99,6 +114,7 @@ export function ShareDialog({ open, roadbook, onOpenChange }: ShareDialogProps) 
                 size="icon"
                 variant="outline"
                 onClick={() => void copyLink()}
+                disabled={preparing}
                 aria-label="复制链接"
                 title="复制链接"
               >

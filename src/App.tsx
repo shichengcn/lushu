@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense } from 'react'
 import {
+  BarChart3,
   BookOpenText,
   Check,
   Download,
@@ -10,11 +11,13 @@ import {
   MoreHorizontal,
   Navigation,
   Pencil,
+  Plus,
   Save,
   Share2,
   Trash2,
+  Users,
 } from 'lucide-react'
-import { toast, Toaster } from 'sonner'
+import { Toaster } from 'sonner'
 import { AmapCanvas } from '@/components/AmapCanvas'
 import { ItineraryPanel } from '@/components/ItineraryPanel'
 import { PlaceEditorDialog } from '@/components/PlaceEditorDialog'
@@ -38,309 +41,49 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { estimateLeg } from '@/lib/amap'
-import {
-  createDay,
-  createId,
-  createRoadbook,
-  downloadRoadbook,
-  importRoadbook,
-  loadRoadbooks,
-  parseSharedRoadbook,
-  reverseDay,
-  saveRoadbooks,
-} from '@/lib/roadbooks'
-import type { Roadbook, TripStop } from '@/types'
+import { useRoadbookController } from '@/hooks/use-roadbook-controller'
+import { downloadRoadbook } from '@/lib/roadbooks'
 
-const INITIAL_SHARED_ROADBOOK = parseSharedRoadbook()
-const INITIAL_ROADBOOKS = loadRoadbooks()
-
-interface ResolvedLeg {
-  dayId: string
-  stopId: string
-  distanceKm: number
-  durationMinutes: number
-}
-
-function relinkStops(stops: TripStop[]) {
-  return stops.map((stop, index) => {
-    if (index === 0) {
-      const { legFromPrevious: _leg, ...firstStop } = stop
-      return firstStop
-    }
-    const previous = stops[index - 1]
-    const mode = stop.legFromPrevious?.mode || 'driving'
-    return {
-      ...stop,
-      legFromPrevious: {
-        mode,
-        ...estimateLeg(previous.location, stop.location, mode),
-      },
-    }
-  })
-}
-
-function nextDate(value: string) {
-  const date = new Date(`${value}T12:00:00`)
-  date.setDate(date.getDate() + 1)
-  return date.toISOString().slice(0, 10)
-}
+const AnalyticsDashboard = lazy(() => import('@/components/AnalyticsDashboard'))
 
 function App() {
-  const [roadbooks, setRoadbooks] = useState<Roadbook[]>(() =>
-    INITIAL_SHARED_ROADBOOK ? [INITIAL_SHARED_ROADBOOK, ...INITIAL_ROADBOOKS] : INITIAL_ROADBOOKS,
-  )
-  const [activeRoadbookId, setActiveRoadbookId] = useState(
-    () => INITIAL_SHARED_ROADBOOK?.id || INITIAL_ROADBOOKS[0].id,
-  )
-  const [activeDayId, setActiveDayId] = useState('')
-  const [selectedStopId, setSelectedStopId] = useState<string | null>(null)
-  const [mode, setMode] = useState<'edit' | 'view'>(INITIAL_SHARED_ROADBOOK ? 'view' : 'edit')
-  const [mobilePane, setMobilePane] = useState<'plan' | 'map'>('plan')
-  const [isSharedPreview, setIsSharedPreview] = useState(Boolean(INITIAL_SHARED_ROADBOOK))
-  const [libraryOpen, setLibraryOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [shareOpen, setShareOpen] = useState(false)
-  const [placeOpen, setPlaceOpen] = useState(false)
-  const [editingStop, setEditingStop] = useState<TripStop | null>(null)
-  const [previousStop, setPreviousStop] = useState<TripStop | null>(null)
-  const [tripDraft, setTripDraft] = useState<Roadbook | null>(null)
-  const importInputRef = useRef<HTMLInputElement>(null)
+  const controller = useRoadbookController()
+  const {
+    roadbooks,
+    activeRoadbook,
+    activeDay,
+    setActiveDayId,
+    selectedStopId,
+    setSelectedStopId,
+    mode,
+    setMode,
+    mainView,
+    setMainView,
+    mobilePane,
+    setMobilePane,
+    isSharedPreview,
+    libraryOpen,
+    setLibraryOpen,
+    settingsOpen,
+    setSettingsOpen,
+    shareOpen,
+    setShareOpen,
+    placeOpen,
+    setPlaceOpen,
+    editingStop,
+    editingDayId,
+    previousStop,
+    tripDraft,
+    setTripDraft,
+    importInputRef,
+    readOnly,
+    saveStatus,
+  } = controller
 
-  const activeRoadbook =
-    roadbooks.find((roadbook) => roadbook.id === activeRoadbookId) || roadbooks[0]
-  const activeDay =
-    activeRoadbook.days.find((day) => day.id === activeDayId) || activeRoadbook.days[0]
-  const readOnly = mode === 'view' || isSharedPreview
-
-  useEffect(() => {
-    const persisted = isSharedPreview
-      ? roadbooks.filter((roadbook) => roadbook.id !== INITIAL_SHARED_ROADBOOK?.id)
-      : roadbooks
-    if (persisted.length) saveRoadbooks(persisted)
-  }, [isSharedPreview, roadbooks])
-
-  const updateRoadbook = useCallback(
-    (transform: (roadbook: Roadbook) => Roadbook, touch = true) => {
-      setRoadbooks((current) =>
-        current.map((roadbook) => {
-          if (roadbook.id !== activeRoadbookId) return roadbook
-          const updated = transform(roadbook)
-          return touch ? { ...updated, updatedAt: new Date().toISOString() } : updated
-        }),
-      )
-    },
-    [activeRoadbookId],
-  )
-
-  const handleRoutesResolved = useCallback(
-    (legs: ResolvedLeg[]) => {
-      if (!legs.length) return
-      updateRoadbook(
-        (roadbook) => {
-          let changed = false
-          const days = roadbook.days.map((day) => ({
-            ...day,
-            stops: day.stops.map((stop) => {
-              const resolved = legs.find((leg) => leg.dayId === day.id && leg.stopId === stop.id)
-              if (!resolved || !stop.legFromPrevious) return stop
-              const distanceChanged =
-                Math.abs(stop.legFromPrevious.distanceKm - resolved.distanceKm) > 0.05
-              const durationChanged =
-                stop.legFromPrevious.durationMinutes !== resolved.durationMinutes
-              if (!distanceChanged && !durationChanged) return stop
-              changed = true
-              return {
-                ...stop,
-                legFromPrevious: {
-                  ...stop.legFromPrevious,
-                  distanceKm: resolved.distanceKm,
-                  durationMinutes: resolved.durationMinutes,
-                },
-              }
-            }),
-          }))
-          return changed ? { ...roadbook, days } : roadbook
-        },
-        false,
-      )
-    },
-    [updateRoadbook],
-  )
-
-  const handleSelectStop = useCallback(
-    (stopId: string) => {
-      const day = activeRoadbook.days.find((candidate) =>
-        candidate.stops.some((stop) => stop.id === stopId),
-      )
-      if (day) setActiveDayId(day.id)
-      setSelectedStopId(stopId)
-    },
-    [activeRoadbook.days],
-  )
-
-  const openAddStop = () => {
-    setEditingStop(null)
-    setPreviousStop(activeDay.stops.at(-1) || null)
-    setPlaceOpen(true)
+  const switchMobilePane = (pane: 'plan' | 'map' | 'analytics') => {
+    setMobilePane(pane)
+    setMainView(pane === 'analytics' ? 'analytics' : 'workspace')
   }
-
-  const openEditStop = (stop: TripStop, previous: TripStop | null) => {
-    setEditingStop(stop)
-    setPreviousStop(previous)
-    setPlaceOpen(true)
-  }
-
-  const saveStop = (stop: TripStop) => {
-    updateRoadbook((roadbook) => ({
-      ...roadbook,
-      days: roadbook.days.map((day) => {
-        if (day.id !== activeDay.id) return day
-        const exists = day.stops.some((candidate) => candidate.id === stop.id)
-        const stops = exists
-          ? day.stops.map((candidate) => (candidate.id === stop.id ? stop : candidate))
-          : [...day.stops, stop]
-        return { ...day, stops: relinkStops(stops) }
-      }),
-    }))
-    setSelectedStopId(stop.id)
-    toast.success(editingStop ? '节点已更新' : '节点已添加')
-  }
-
-  const moveStop = (stopId: string, direction: -1 | 1) => {
-    updateRoadbook((roadbook) => ({
-      ...roadbook,
-      days: roadbook.days.map((day) => {
-        if (day.id !== activeDay.id) return day
-        const index = day.stops.findIndex((stop) => stop.id === stopId)
-        const target = index + direction
-        if (index < 0 || target < 0 || target >= day.stops.length) return day
-        const stops = [...day.stops]
-        ;[stops[index], stops[target]] = [stops[target], stops[index]]
-        return { ...day, stops: relinkStops(stops) }
-      }),
-    }))
-  }
-
-  const deleteStop = (stopId: string) => {
-    updateRoadbook((roadbook) => ({
-      ...roadbook,
-      days: roadbook.days.map((day) =>
-        day.id === activeDay.id
-          ? { ...day, stops: relinkStops(day.stops.filter((stop) => stop.id !== stopId)) }
-          : day,
-      ),
-    }))
-    if (selectedStopId === stopId) setSelectedStopId(null)
-    toast.success('节点已删除')
-  }
-
-  const addDay = () => {
-    const date = nextDate(activeRoadbook.days.at(-1)?.date || activeRoadbook.endDate)
-    const day = createDay(activeRoadbook.days.length, date)
-    updateRoadbook((roadbook) => ({
-      ...roadbook,
-      endDate: date,
-      days: [...roadbook.days, day],
-    }))
-    setActiveDayId(day.id)
-  }
-
-  const deleteDay = (dayId: string) => {
-    if (activeRoadbook.days.length === 1) return
-    const remaining = activeRoadbook.days.filter((day) => day.id !== dayId)
-    updateRoadbook((roadbook) => ({
-      ...roadbook,
-      days: remaining,
-      startDate: remaining[0].date,
-      endDate: remaining.at(-1)?.date || remaining[0].date,
-    }))
-    setActiveDayId(remaining[0].id)
-    setSelectedStopId(null)
-    toast.success('当天行程已删除')
-  }
-
-  const reverseActiveDay = (dayId: string) => {
-    updateRoadbook((roadbook) => ({
-      ...roadbook,
-      days: roadbook.days.map((day) => (day.id === dayId ? reverseDay(day) : day)),
-    }))
-    toast.success('路线已反向排列')
-  }
-
-  const createNewRoadbook = () => {
-    const roadbook = createRoadbook()
-    setRoadbooks((current) => [roadbook, ...current])
-    setActiveRoadbookId(roadbook.id)
-    setMode('edit')
-    setIsSharedPreview(false)
-    window.history.replaceState(null, '', window.location.pathname)
-  }
-
-  const duplicateRoadbook = (id: string) => {
-    const source = roadbooks.find((roadbook) => roadbook.id === id)
-    if (!source) return
-    const timestamp = new Date().toISOString()
-    const duplicate = {
-      ...structuredClone(source),
-      id: createId('roadbook'),
-      title: `${source.title}（副本）`,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }
-    setRoadbooks((current) => [duplicate, ...current])
-    toast.success('已创建副本')
-  }
-
-  const deleteRoadbook = (id: string) => {
-    if (roadbooks.length === 1) return
-    const remaining = roadbooks.filter((roadbook) => roadbook.id !== id)
-    setRoadbooks(remaining)
-    if (id === activeRoadbookId) setActiveRoadbookId(remaining[0].id)
-    toast.success('路书已删除')
-  }
-
-  const saveSharedRoadbook = () => {
-    setIsSharedPreview(false)
-    setMode('edit')
-    window.history.replaceState(null, '', window.location.pathname)
-    toast.success('已保存到我的路书')
-  }
-
-  const openTripSettings = () => {
-    setTripDraft(structuredClone(activeRoadbook))
-    setSettingsOpen(true)
-  }
-
-  const saveTripSettings = () => {
-    if (!tripDraft?.title.trim()) return
-    updateRoadbook(() => ({ ...tripDraft, title: tripDraft.title.trim() }))
-    setSettingsOpen(false)
-    toast.success('路书信息已保存')
-  }
-
-  const handleImport = async (file: File | undefined) => {
-    if (!file) return
-    try {
-      const imported = await importRoadbook(file)
-      setRoadbooks((current) => [imported, ...current])
-      setActiveRoadbookId(imported.id)
-      setMode('edit')
-      setIsSharedPreview(false)
-      toast.success('路书导入成功')
-    } catch {
-      toast.error('导入失败，请选择有效的路书 JSON 文件')
-    } finally {
-      if (importInputRef.current) importInputRef.current.value = ''
-    }
-  }
-
-  const saveStatus = useMemo(() => {
-    const time = new Date(activeRoadbook.updatedAt)
-    return Number.isNaN(time.getTime())
-      ? '已保存到本地'
-      : `${time.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 已保存`
-  }, [activeRoadbook.updatedAt])
 
   return (
     <div className="app-shell">
@@ -359,9 +102,28 @@ function App() {
           {saveStatus}
         </div>
 
+        <div className="primary-view-toggle" aria-label="主视图">
+          <button
+            type="button"
+            className={mainView === 'workspace' ? 'is-active' : ''}
+            onClick={() => setMainView('workspace')}
+          >
+            <MapIcon size={15} />
+            行程地图
+          </button>
+          <button
+            type="button"
+            className={mainView === 'analytics' ? 'is-active' : ''}
+            onClick={() => setMainView('analytics')}
+          >
+            <BarChart3 size={15} />
+            汇总分析
+          </button>
+        </div>
+
         <nav className="header-actions" aria-label="路书操作">
           {isSharedPreview ? (
-            <Button type="button" size="sm" onClick={saveSharedRoadbook}>
+            <Button type="button" size="sm" onClick={controller.saveSharedRoadbook}>
               <Save size={15} />
               保存到我的路书
             </Button>
@@ -414,7 +176,7 @@ function App() {
               <DropdownMenuItem
                 className="danger-menu-item"
                 disabled={roadbooks.length === 1}
-                onSelect={() => deleteRoadbook(activeRoadbook.id)}
+                onSelect={() => controller.deleteRoadbook(activeRoadbook.id)}
               >
                 <Trash2 />
                 删除当前路书
@@ -426,7 +188,7 @@ function App() {
             type="file"
             accept="application/json,.json"
             hidden
-            onChange={(event) => void handleImport(event.target.files?.[0])}
+            onChange={(event) => void controller.handleImport(event.target.files?.[0])}
           />
         </nav>
       </header>
@@ -435,7 +197,7 @@ function App() {
         <button
           type="button"
           className={mobilePane === 'plan' ? 'is-active' : ''}
-          onClick={() => setMobilePane('plan')}
+          onClick={() => switchMobilePane('plan')}
         >
           <BookOpenText size={16} />
           行程
@@ -443,50 +205,70 @@ function App() {
         <button
           type="button"
           className={mobilePane === 'map' ? 'is-active' : ''}
-          onClick={() => setMobilePane('map')}
+          onClick={() => switchMobilePane('map')}
         >
           <MapIcon size={16} />
           地图
         </button>
+        <button
+          type="button"
+          className={mobilePane === 'analytics' ? 'is-active' : ''}
+          onClick={() => switchMobilePane('analytics')}
+        >
+          <BarChart3 size={16} />
+          分析
+        </button>
       </div>
 
-      <main className={`workspace mobile-${mobilePane}`}>
-        <ItineraryPanel
-          roadbook={activeRoadbook}
-          activeDayId={activeDay.id}
-          selectedStopId={selectedStopId}
-          readOnly={readOnly}
-          onSelectDay={(dayId) => {
-            setActiveDayId(dayId)
-            setSelectedStopId(null)
-          }}
-          onSelectStop={handleSelectStop}
-          onEditTrip={openTripSettings}
-          onAddDay={addDay}
-          onDeleteDay={deleteDay}
-          onReverseDay={reverseActiveDay}
-          onAddStop={openAddStop}
-          onEditStop={openEditStop}
-          onMoveStop={moveStop}
-          onDeleteStop={deleteStop}
-        />
-        <AmapCanvas
-          roadbook={activeRoadbook}
-          activeDayId={activeDay.id}
-          selectedStopId={selectedStopId}
-          onSelectStop={handleSelectStop}
-          onRoutesResolved={handleRoutesResolved}
-        />
-      </main>
+      {mainView === 'analytics' ? (
+        <main className="analytics-workspace">
+          <Suspense fallback={<div className="analytics-loading">正在汇总行程数据...</div>}>
+            <AnalyticsDashboard roadbook={activeRoadbook} />
+          </Suspense>
+        </main>
+      ) : (
+        <main className={`workspace mobile-${mobilePane}`}>
+          <ItineraryPanel
+            roadbook={activeRoadbook}
+            activeDayId={activeDay.id}
+            selectedStopId={selectedStopId}
+            readOnly={readOnly}
+            onSelectDay={(dayId) => {
+              setActiveDayId(dayId)
+              setSelectedStopId(null)
+            }}
+            onSelectStop={controller.handleSelectStop}
+            onEditTrip={controller.openTripSettings}
+            onAddDay={controller.addDay}
+            onDeleteDay={controller.deleteDay}
+            onReverseDay={controller.reverseActiveDay}
+            onAddStop={controller.openAddStop}
+            onEditStop={controller.openEditStop}
+            onMoveStop={controller.moveStop}
+            onMoveStopToDay={controller.moveStopToDay}
+            onToggleHidden={controller.toggleHidden}
+            onDeleteStop={controller.deleteStop}
+          />
+          <AmapCanvas
+            roadbook={activeRoadbook}
+            activeDayId={activeDay.id}
+            selectedStopId={selectedStopId}
+            onSelectStop={controller.handleSelectStop}
+            onEditStop={controller.openEditStop}
+            onRoutesResolved={controller.handleRoutesResolved}
+          />
+        </main>
+      )}
 
       {placeOpen ? (
         <PlaceEditorDialog
-          key={editingStop?.id || `new-${activeDay.id}`}
+          key={editingStop?.id || `new-${editingDayId}`}
           open={placeOpen}
           stop={editingStop}
           previousStop={previousStop}
+          travelers={activeRoadbook.travelers}
           onOpenChange={setPlaceOpen}
-          onSave={saveStop}
+          onSave={controller.saveStop}
         />
       ) : null}
       {shareOpen ? (
@@ -497,20 +279,17 @@ function App() {
         roadbooks={roadbooks}
         activeRoadbookId={activeRoadbook.id}
         onOpenChange={setLibraryOpen}
-        onSelect={(id) => {
-          setActiveRoadbookId(id)
-          setIsSharedPreview(id === INITIAL_SHARED_ROADBOOK?.id)
-        }}
-        onCreate={createNewRoadbook}
-        onDuplicate={duplicateRoadbook}
-        onDelete={deleteRoadbook}
+        onSelect={controller.selectRoadbook}
+        onCreate={controller.createNewRoadbook}
+        onDuplicate={controller.duplicateRoadbook}
+        onDelete={controller.deleteRoadbook}
       />
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="settings-dialog">
           <DialogHeader>
-            <DialogTitle>路书信息</DialogTitle>
-            <DialogDescription>设置行程名称、日期和简介。</DialogDescription>
+            <DialogTitle>路书信息与角色</DialogTitle>
+            <DialogDescription>设置名称、起始日期和参与行程的成员。</DialogDescription>
           </DialogHeader>
           {tripDraft ? (
             <div className="trip-settings-form">
@@ -540,15 +319,7 @@ function App() {
                 </label>
                 <label>
                   结束日期
-                  <Input
-                    type="date"
-                    value={tripDraft.endDate}
-                    onChange={(event) =>
-                      setTripDraft((current) =>
-                        current ? { ...current, endDate: event.target.value } : current,
-                      )
-                    }
-                  />
+                  <Input type="date" value={tripDraft.endDate} readOnly />
                 </label>
               </div>
               <label>
@@ -563,13 +334,74 @@ function App() {
                   }
                 />
               </label>
+              <div className="traveler-editor">
+                <div className="field-heading">
+                  <span className="field-label">
+                    <Users size={15} />
+                    行程角色
+                  </span>
+                  <button type="button" onClick={controller.addTraveler}>
+                    <Plus size={14} />
+                    添加角色
+                  </button>
+                </div>
+                {tripDraft.travelers.map((traveler, index) => (
+                  <div className="traveler-row" key={traveler.id}>
+                    <input
+                      type="color"
+                      value={traveler.color}
+                      aria-label={`${traveler.name}颜色`}
+                      onChange={(event) =>
+                        setTripDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                travelers: current.travelers.map((item) =>
+                                  item.id === traveler.id
+                                    ? { ...item, color: event.target.value }
+                                    : item,
+                                ),
+                              }
+                            : current,
+                        )
+                      }
+                    />
+                    <Input
+                      value={traveler.name}
+                      aria-label={`角色${index + 1}名称`}
+                      onChange={(event) =>
+                        setTripDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                travelers: current.travelers.map((item) =>
+                                  item.id === traveler.id
+                                    ? { ...item, name: event.target.value }
+                                    : item,
+                                ),
+                              }
+                            : current,
+                        )
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={() => controller.deleteTraveler(traveler.id)}
+                      aria-label={`删除角色${traveler.name}`}
+                      title="删除角色"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setSettingsOpen(false)}>
               取消
             </Button>
-            <Button type="button" onClick={saveTripSettings}>
+            <Button type="button" onClick={controller.saveTripSettings}>
               保存
             </Button>
           </DialogFooter>

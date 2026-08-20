@@ -7,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { totalCost, totalDistance } from '@/lib/roadbooks'
+import { totalCost, totalDrivingDistance } from '@/lib/roadbooks'
 import type { Roadbook } from '@/types'
 
 interface TripLibraryDialogProps {
@@ -63,7 +63,7 @@ export function TripLibraryDialog({
                     {roadbook.startDate} 至 {roadbook.endDate}
                   </small>
                   <em>
-                    {roadbook.days.length} 天 · {totalDistance(roadbook).toFixed(0)} km · ¥
+                    {roadbook.days.length} 天 · 驾车 {totalDrivingDistance(roadbook).toFixed(0)} km · ¥
                     {totalCost(roadbook).toLocaleString('zh-CN')}
                   </em>
                 </span>
