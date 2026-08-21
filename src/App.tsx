@@ -47,6 +47,20 @@ import type { MapProvider, MapScope } from '@/types'
 
 const AnalyticsDashboard = lazy(() => import('@/components/AnalyticsDashboard'))
 
+function AnalyticsFallback() {
+  return (
+    <section className="analytics-progress" aria-live="polite">
+      <BarChart3 size={24} />
+      <strong>正在载入分析模块</strong>
+      <span>准备费用、里程、时长与节点数据</span>
+      <div>
+        <i style={{ width: '18%' }} />
+      </div>
+      <em>18%</em>
+    </section>
+  )
+}
+
 function App() {
   const controller = useRoadbookController()
   const [mapProvider, setMapProvider] = useState<MapProvider>(() => {
@@ -232,7 +246,7 @@ function App() {
 
       {mainView === 'analytics' ? (
         <main className="analytics-workspace">
-          <Suspense fallback={<div className="analytics-loading">正在汇总行程数据...</div>}>
+          <Suspense fallback={<AnalyticsFallback />}>
             <AnalyticsDashboard roadbook={activeRoadbook} />
           </Suspense>
         </main>
@@ -283,6 +297,9 @@ function App() {
             }}
             onEditStop={controller.openEditStop}
             onRoutesResolved={controller.handleRoutesResolved}
+            onAddPlacePhoto={controller.addPlacePhoto}
+            onAddPlaceNote={controller.addPlaceNote}
+            readOnly={readOnly}
           />
         </main>
       )}

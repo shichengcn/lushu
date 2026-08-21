@@ -3,6 +3,7 @@ import { RateLimitedRetryQueue } from '@/lib/async-request-queue'
 import {
   BAIDU_REQUEST_INTERVAL_MS,
   BAIDU_RETRY_DELAYS_MS,
+  baiduRetryDelay,
 } from '@/lib/baidu'
 
 describe('Baidu request scheduling', () => {
@@ -52,6 +53,25 @@ describe('Baidu request scheduling', () => {
     expect(result).toBe('ready')
     expect(attempts).toBe(5)
     expect(waits).toEqual([1000, 2000, 4000, 8000])
+  })
+
+  it('continues exponential Baidu retries beyond eight seconds', async () => {
+    let attempts = 0
+    const waits: number[] = []
+    const queue = new RateLimitedRetryQueue({
+      intervalMs: 0,
+      retryDelayMs: baiduRetryDelay,
+      sleep: async (milliseconds) => {
+        waits.push(milliseconds)
+      },
+    })
+
+    await queue.run(async () => {
+      attempts += 1
+      if (attempts < 7) throw new Error('temporary failure')
+    })
+
+    expect(waits).toEqual([1000, 2000, 4000, 8000, 16000, 32000])
   })
 
   it('does not start an API request after cancellation', async () => {

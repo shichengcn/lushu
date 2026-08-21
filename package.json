@@ -5,11 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:worker": "pnpm build && wrangler dev --local",
     "build": "tsc -b && vite build",
-    "package:axure": "pnpm build && rm -f tuji-roadbook-axureshow.zip && cd dist && zip -qr ../tuji-roadbook-axureshow.zip .",
-    "deploy": "pnpm build && wrangler deploy",
-    "lint": "oxlint worker.js src/App.tsx src/main.tsx src/types.ts src/lib src/hooks/use-roadbook-controller.ts src/components/AmapCanvas.tsx src/components/BaiduMapCanvas.tsx src/components/MapCanvas.tsx src/components/AnalyticsDashboard.tsx src/components/ItineraryPanel.tsx src/components/PlaceEditorDialog.tsx src/components/ShareDialog.tsx src/components/TripLibraryDialog.tsx",
+    "export:local": "node scripts/export-local.mjs",
+    "lint": "oxlint src/App.tsx src/main.tsx src/types.ts src/lib src/hooks/use-roadbook-controller.ts src/components/AmapCanvas.tsx src/components/BaiduMapCanvas.tsx src/components/MapCanvas.tsx src/components/AnalyticsDashboard.tsx src/components/ItineraryPanel.tsx src/components/PlaceEditorDialog.tsx src/components/PlaceMediaGallery.tsx src/components/ShareDialog.tsx src/components/TripLibraryDialog.tsx",
     "test": "vitest run",
     "preview": "vite preview"
   },
@@ -79,7 +77,6 @@
     "tailwindcss-animate": "^1.0.7",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
-    "vitest": "^4.1.11",
-    "wrangler": "^4.124.0"
+    "vitest": "^4.1.11"
   }
 }

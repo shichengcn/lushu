@@ -17,6 +17,7 @@ import {
   TrafficCone,
   X,
 } from 'lucide-react'
+import { PlaceMediaGallery } from '@/components/PlaceMediaGallery'
 import {
   DAY_COLORS,
   legCost,
@@ -39,6 +40,7 @@ import {
   loadAMap,
   searchNearbyFuelStations,
 } from '@/lib/amap'
+import { placeLibraryEntry } from '@/lib/place-media'
 import type {
   MapBaseLayer,
   MapFocusMode,
@@ -58,6 +60,9 @@ interface AmapCanvasProps {
   onRoutesResolved: (legs: ResolvedLeg[]) => void
   scope: MapScope
   onScopeChange: (scope: MapScope) => void
+  onAddPlacePhoto: (stopId: string, file: File) => Promise<void>
+  onAddPlaceNote: (stopId: string, text: string) => void
+  readOnly: boolean
 }
 
 interface RouteResult {
@@ -117,6 +122,7 @@ function markerElement({
   dayIndex,
   stopIndex,
   stop,
+  photoUrl,
   selected,
   dimmed,
   focusMode,
@@ -124,6 +130,7 @@ function markerElement({
   dayIndex: number
   stopIndex: number
   stop: TripStop
+  photoUrl?: string
   selected: boolean
   dimmed: boolean
   focusMode: MapFocusMode
@@ -143,7 +150,18 @@ function markerElement({
 
   const pin = document.createElement('span')
   pin.className = 'map-marker-pin'
-  pin.textContent = String(stopIndex + 1)
+  if (photoUrl) {
+    const photo = document.createElement('img')
+    photo.src = photoUrl
+    photo.alt = ''
+    photo.onload = () => {
+      if (photo.naturalWidth === photo.naturalHeight) photo.remove()
+    }
+    pin.appendChild(photo)
+  }
+  const number = document.createElement('b')
+  number.textContent = String(stopIndex + 1)
+  pin.appendChild(number)
   marker.appendChild(pin)
 
   const label = document.createElement('span')
@@ -309,6 +327,9 @@ export function AmapCanvas({
   onRoutesResolved,
   scope,
   onScopeChange,
+  onAddPlacePhoto,
+  onAddPlaceNote,
+  readOnly,
 }: AmapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -328,12 +349,21 @@ export function AmapCanvas({
   const [layerMenuOpen, setLayerMenuOpen] = useState(false)
   const [measuring, setMeasuring] = useState(false)
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null)
-
-  const selectedDay = selectedElement
-    ? roadbook.days.find((day) => day.id === selectedElement.dayId)
+  const [dismissedStopId, setDismissedStopId] = useState<string | null>(null)
+  const externalSelectedDay = selectedStopId
+    ? roadbook.days.find((day) => day.stops.some((stop) => stop.id === selectedStopId))
     : null
-  const selectedStop = selectedDay?.stops.find((stop) => stop.id === selectedElement?.stopId)
-  const selectedFrom = selectedDay?.stops.find((stop) => stop.id === selectedElement?.fromStopId)
+  const detailElement =
+    selectedElement && selectedElement.stopId === selectedStopId
+      ? selectedElement
+      : selectedStopId && externalSelectedDay && dismissedStopId !== selectedStopId
+        ? { kind: 'stop' as const, dayId: externalSelectedDay.id, stopId: selectedStopId }
+        : null
+  const selectedDay = detailElement
+    ? roadbook.days.find((day) => day.id === detailElement.dayId)
+    : null
+  const selectedStop = selectedDay?.stops.find((stop) => stop.id === detailElement?.stopId)
+  const selectedFrom = selectedDay?.stops.find((stop) => stop.id === detailElement?.fromStopId)
 
   useEffect(() => {
     let cancelled = false
@@ -443,6 +473,7 @@ export function AmapCanvas({
               dayIndex,
               stopIndex,
               stop,
+              photoUrl: placeLibraryEntry(roadbook, stop).photos[0]?.url,
               selected: selectedStopId === stop.id,
               dimmed: !emphasizeMarker,
               focusMode: focusMode === 'cost' && !visibility.costs ? 'overview' : focusMode,
@@ -453,6 +484,7 @@ export function AmapCanvas({
           })
           marker.on('click', () => {
             onSelectStop(stop.id)
+            setDismissedStopId(null)
             setSelectedElement({ kind: 'stop', dayId: day.id, stopId: stop.id })
           })
           marker.setMap(map)
@@ -600,6 +632,8 @@ export function AmapCanvas({
                     stopId: stop.id,
                     fromStopId: previous.id,
                   })
+                  onSelectStop(stop.id)
+                  setDismissedStopId(null)
                   setSelectedElement({
                     kind: 'leg',
                     dayId,
@@ -843,20 +877,23 @@ export function AmapCanvas({
         ) : null}
       </div>
 
-      {selectedElement && selectedStop && selectedDay ? (
+      {detailElement && selectedStop && selectedDay ? (
         <aside className="map-detail-panel">
           <button
             type="button"
             className="map-detail-close"
-            onClick={() => setSelectedElement(null)}
+            onClick={() => {
+              setSelectedElement(null)
+              setDismissedStopId(selectedStop.id)
+            }}
             aria-label="关闭地图详情"
           >
             <X size={16} />
           </button>
           <span className="map-detail-kicker">
-            {selectedElement.kind === 'leg' ? 'ROUTE DETAIL' : 'PLACE DETAIL'}
+            {detailElement.kind === 'leg' ? 'ROUTE DETAIL' : 'PLACE DETAIL'}
           </span>
-          {selectedElement.kind === 'leg' && selectedFrom ? (
+          {detailElement.kind === 'leg' && selectedFrom ? (
             <>
               <h3>{selectedFrom.name} → {selectedStop.name}</h3>
               <div className="map-detail-metrics">
@@ -897,6 +934,13 @@ export function AmapCanvas({
             <>
               <h3>{selectedStop.name}</h3>
               <p className="map-detail-address">{selectedStop.address}</p>
+              <PlaceMediaGallery
+                roadbook={roadbook}
+                stop={selectedStop}
+                readOnly={readOnly}
+                onAddPhoto={onAddPlacePhoto}
+                onAddNote={onAddPlaceNote}
+              />
               <div className="map-detail-metrics">
                 <span><strong>{selectedStop.arrivalTime}</strong> 到达</span>
                 <span><strong>{selectedStop.stayMinutes}</strong> 分钟</span>

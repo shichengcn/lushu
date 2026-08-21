@@ -51,6 +51,23 @@ export interface TripNote {
   createdAt: string
 }
 
+export interface PlacePhoto {
+  id: string
+  url: string
+  caption: string
+  source: 'generated' | 'upload'
+  createdAt: string
+}
+
+export interface PlaceLibraryEntry {
+  key: string
+  name: string
+  address: string
+  photos: PlacePhoto[]
+  notes: TripNote[]
+  updatedAt: string
+}
+
 export interface Traveler {
   id: string
   name: string
@@ -100,6 +117,7 @@ export interface Roadbook {
   endDate: string
   travelers: Traveler[]
   days: TripDay[]
+  placeLibrary: Record<string, PlaceLibraryEntry>
   createdAt: string
   updatedAt: string
 }

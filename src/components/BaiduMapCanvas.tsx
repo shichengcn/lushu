@@ -8,10 +8,12 @@ import {
   Map as MapIcon,
   MapPinned,
   Navigation,
+  Ruler,
   Satellite,
   TrafficCone,
   X,
 } from 'lucide-react'
+import { PlaceMediaGallery } from '@/components/PlaceMediaGallery'
 import {
   buildBaiduNavigationUrl,
   buildBaiduPlaceUrl,
@@ -34,6 +36,7 @@ import {
   stopCost,
   totalCost,
 } from '@/lib/roadbooks'
+import { placeLibraryEntry } from '@/lib/place-media'
 import type {
   MapBaseLayer,
   MapFocusMode,
@@ -52,6 +55,9 @@ interface BaiduMapCanvasProps {
   onSelectStop: (stopId: string) => void
   onEditStop: (stop: TripStop, previousStop: TripStop | null, dayId: string) => void
   onRoutesResolved: (legs: ResolvedLeg[]) => void
+  onAddPlacePhoto: (stopId: string, file: File) => Promise<void>
+  onAddPlaceNote: (stopId: string, text: string) => void
+  readOnly: boolean
 }
 
 interface BaiduRouteResult {
@@ -170,6 +176,9 @@ export function BaiduMapCanvas({
   onSelectStop,
   onEditStop,
   onRoutesResolved,
+  onAddPlacePhoto,
+  onAddPlaceNote,
+  readOnly,
 }: BaiduMapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -177,6 +186,7 @@ export function BaiduMapCanvas({
   const generationRef = useRef(0)
   const routeCacheRef = useRef(new Map<string, BaiduRouteResult>())
   const measurePointsRef = useRef<any[]>([])
+  const measureOverlaysRef = useRef<any[]>([])
   const [mapReady, setMapReady] = useState(false)
   const [mapError, setMapError] = useState('')
   const [routeActivity, setRouteActivity] = useState({ pending: 0, retries: 0 })
@@ -184,13 +194,24 @@ export function BaiduMapCanvas({
   const [baseLayer, setBaseLayer] = useState<MapBaseLayer>('standard')
   const [traffic, setTraffic] = useState(false)
   const [measuring, setMeasuring] = useState(false)
+  const [measuredDistance, setMeasuredDistance] = useState(0)
+  const [measurePointCount, setMeasurePointCount] = useState(0)
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null)
-
-  const selectedDay = selectedElement
-    ? roadbook.days.find((day) => day.id === selectedElement.dayId)
+  const [dismissedStopId, setDismissedStopId] = useState<string | null>(null)
+  const externalSelectedDay = selectedStopId
+    ? roadbook.days.find((day) => day.stops.some((stop) => stop.id === selectedStopId))
     : null
-  const selectedStop = selectedDay?.stops.find((stop) => stop.id === selectedElement?.stopId)
-  const selectedFrom = selectedDay?.stops.find((stop) => stop.id === selectedElement?.fromStopId)
+  const detailElement =
+    selectedElement && selectedElement.stopId === selectedStopId
+      ? selectedElement
+      : selectedStopId && externalSelectedDay && dismissedStopId !== selectedStopId
+        ? { kind: 'stop' as const, dayId: externalSelectedDay.id, stopId: selectedStopId }
+        : null
+  const selectedDay = detailElement
+    ? roadbook.days.find((day) => day.id === detailElement.dayId)
+    : null
+  const selectedStop = selectedDay?.stops.find((stop) => stop.id === detailElement?.stopId)
+  const selectedFrom = selectedDay?.stops.find((stop) => stop.id === detailElement?.fromStopId)
   const markerEntries = useMemo(
     () => markerEntriesForScope(roadbook, scope),
     [roadbook, scope],
@@ -232,22 +253,31 @@ export function BaiduMapCanvas({
   useEffect(() => {
     const BMapGL = baiduRef.current
     const map = mapRef.current
-    if (!mapReady || !BMapGL || !map) return
-    const handler = (event: any) => {
+    const container = containerRef.current
+    if (!mapReady || !BMapGL || !map || !container) return
+    const handler = (event: MouseEvent) => {
       if (!measuring) return
-      measurePointsRef.current.push(event.latlng)
+      const bounds = container.getBoundingClientRect()
+      const point = map.pixelToPoint(
+        new BMapGL.Pixel(event.clientX - bounds.left, event.clientY - bounds.top),
+      )
+      measurePointsRef.current.push(point)
+      setMeasurePointCount(measurePointsRef.current.length)
       const points = measurePointsRef.current
+      const marker = new BMapGL.Marker(point)
+      map.addOverlay(marker)
+      measureOverlaysRef.current.push(marker)
       if (points.length > 1) {
         const segment = [points.at(-2), points.at(-1)]
-        map.addOverlay(
-          new BMapGL.Polyline(segment, {
-            strokeColor: '#172c36',
-            strokeWeight: 3,
-            strokeOpacity: 0.85,
-            strokeStyle: 'dashed',
-          }),
-        )
+        const line = new BMapGL.Polyline(segment, {
+          strokeColor: '#172c36',
+          strokeWeight: 3,
+          strokeOpacity: 0.85,
+          strokeStyle: 'dashed',
+        })
+        map.addOverlay(line)
         const distance = map.getDistance(segment[0], segment[1])
+        setMeasuredDistance((current) => current + distance)
         const label = new BMapGL.Label(`${(distance / 1000).toFixed(2)} km`, {
           position: segment[1],
           offset: new BMapGL.Size(8, -10),
@@ -260,11 +290,11 @@ export function BaiduMapCanvas({
           color: '#172c36',
         })
         map.addOverlay(label)
+        measureOverlaysRef.current.push(line, label)
       }
     }
-    map.addEventListener('click', handler)
-    if (!measuring) measurePointsRef.current = []
-    return () => map.removeEventListener('click', handler)
+    container.addEventListener('click', handler, true)
+    return () => container.removeEventListener('click', handler, true)
   }, [mapReady, measuring])
 
   useEffect(() => {
@@ -274,6 +304,10 @@ export function BaiduMapCanvas({
     const generation = ++generationRef.current
     const requestController = new AbortController()
     map.clearOverlays()
+    measurePointsRef.current = []
+    measureOverlaysRef.current = []
+    setMeasuredDistance(0)
+    setMeasurePointCount(0)
     const relevantGroups = routeGroupsForScope(roadbook, scope)
     const relevantGroupIds = new Set(relevantGroups.map((group) => group.id))
     const allGroups = displayDrivingGroups(roadbook, scope)
@@ -282,9 +316,24 @@ export function BaiduMapCanvas({
       const [lng, lat] = gcj02ToBd09(stop.location)
       const point = new BMapGL.Point(lng, lat)
       const marker = new BMapGL.Marker(point)
+      const photoUrl = placeLibraryEntry(roadbook, stop).photos[0]?.url
+      if (photoUrl) {
+        const preview = new Image()
+        preview.onload = () => {
+          if (preview.naturalWidth === preview.naturalHeight) return
+          marker.setIcon(
+            new BMapGL.Icon(photoUrl, new BMapGL.Size(46, 46), {
+              anchor: new BMapGL.Size(23, 46),
+              imageSize: new BMapGL.Size(46, 46),
+            }),
+          )
+        }
+        preview.src = photoUrl
+      }
       marker.setTitle(stop.name)
       marker.addEventListener('click', () => {
         onSelectStop(stop.id)
+        setDismissedStopId(null)
         setSelectedElement({
           kind: 'stop',
           dayId: roadbook.days[dayIndex].id,
@@ -292,6 +341,33 @@ export function BaiduMapCanvas({
         })
       })
       map.addOverlay(marker)
+      const numberLabel = new BMapGL.Label(String(stopIndex + 1), {
+        position: point,
+        offset: new BMapGL.Size(-14, -58),
+      })
+      numberLabel.setStyle({
+        width: '28px',
+        height: '28px',
+        border: '3px solid #fff',
+        borderRadius: '50%',
+        background: DAY_COLORS[dayIndex % DAY_COLORS.length],
+        color: '#fff',
+        fontSize: '14px',
+        fontWeight: '800',
+        lineHeight: '22px',
+        textAlign: 'center',
+        boxShadow: '0 3px 8px rgba(24,39,53,.28)',
+      })
+      numberLabel.addEventListener('click', () => {
+        onSelectStop(stop.id)
+        setDismissedStopId(null)
+        setSelectedElement({
+          kind: 'stop',
+          dayId: roadbook.days[dayIndex].id,
+          stopId: stop.id,
+        })
+      })
+      map.addOverlay(numberLabel)
       const selected = selectedStopId === stop.id
       const focused =
         (relevant || day.id === activeDayId) &&
@@ -326,6 +402,7 @@ export function BaiduMapCanvas({
       })
       label.addEventListener('click', () => {
         onSelectStop(stop.id)
+        setDismissedStopId(null)
         setSelectedElement({
           kind: 'stop',
           dayId: roadbook.days[dayIndex].id,
@@ -437,6 +514,8 @@ export function BaiduMapCanvas({
                   fromStopId: previous.id,
                 }
                 onScopeChange(nextScope)
+                onSelectStop(stop.id)
+                setDismissedStopId(null)
                 setSelectedElement({
                   kind: 'leg',
                   dayId: group.dayId,
@@ -492,6 +571,14 @@ export function BaiduMapCanvas({
   ])
 
   const selectedRelevantFrom = selectedFrom || null
+  const resetMeasurement = () => {
+    const map = mapRef.current
+    measureOverlaysRef.current.forEach((overlay) => map?.removeOverlay?.(overlay))
+    measurePointsRef.current = []
+    measureOverlaysRef.current = []
+    setMeasuredDistance(0)
+    setMeasurePointCount(0)
+  }
   const openPlace = () => {
     if (selectedStop) {
       window.open(buildBaiduPlaceUrl(selectedStop), '_blank', 'noopener,noreferrer')
@@ -570,15 +657,34 @@ export function BaiduMapCanvas({
         <button
           type="button"
           className={measuring ? 'is-active' : ''}
-          onClick={() => setMeasuring((current) => !current)}
-          title="测距"
+          onClick={() =>
+            setMeasuring((current) => {
+              resetMeasurement()
+              return !current
+            })
+          }
+          title="点击地图逐点测距"
         >
-          <MapPinned size={17} />
+          <Ruler size={17} />
         </button>
         <button type="button" disabled={!selectedStop} onClick={openPlace} title="百度地图地点">
           <Eye size={17} />
         </button>
       </div>
+
+      {measuring ? (
+        <div className="map-measure-status">
+          <Ruler size={14} />
+          <span>
+            {measurePointCount
+              ? `累计 ${(measuredDistance / 1000).toFixed(2)} km`
+              : '点击地图添加测量点'}
+          </span>
+          <button type="button" onClick={resetMeasurement} title="清空测距">
+            <X size={14} />
+          </button>
+        </div>
+      ) : null}
 
       <div className="map-summary">
         <MapPinned size={16} />
@@ -593,27 +699,37 @@ export function BaiduMapCanvas({
         ) : null}
       </div>
 
-      {selectedElement && selectedStop && selectedDay ? (
+      {detailElement && selectedStop && selectedDay ? (
         <aside className="map-detail-panel">
           <button
             type="button"
             className="map-detail-close"
-            onClick={() => setSelectedElement(null)}
+            onClick={() => {
+              setSelectedElement(null)
+              setDismissedStopId(selectedStop.id)
+            }}
             aria-label="关闭地图详情"
           >
             <X size={16} />
           </button>
           <span className="map-detail-kicker">
-            {selectedElement.kind === 'leg' ? 'BAIDU ROUTE' : 'BAIDU PLACE'}
+            {detailElement.kind === 'leg' ? 'BAIDU ROUTE' : 'BAIDU PLACE'}
           </span>
           <h3>
-            {selectedElement.kind === 'leg' && selectedRelevantFrom
+            {detailElement.kind === 'leg' && selectedRelevantFrom
               ? `${selectedRelevantFrom.name} → ${selectedStop.name}`
               : selectedStop.name}
           </h3>
           <p className="map-detail-address">{selectedStop.address}</p>
-          {selectedElement.kind === 'leg' && selectedRelevantFrom ? (
+          {detailElement.kind === 'leg' && selectedRelevantFrom ? (
             <>
+              <PlaceMediaGallery
+                roadbook={roadbook}
+                stop={selectedStop}
+                readOnly={readOnly}
+                onAddPhoto={onAddPlacePhoto}
+                onAddNote={onAddPlaceNote}
+              />
               <div className="map-detail-metrics">
                 <span>
                   <strong>{selectedStop.legFromPrevious?.distanceKm.toFixed(1)}</strong> km

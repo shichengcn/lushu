@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import {
+  BarChart3,
   BedDouble,
   Clock3,
   Gauge,
@@ -57,7 +59,7 @@ function numericValue(value: ValueType | undefined) {
   return Number(normalized || 0)
 }
 
-export function AnalyticsDashboard({ roadbook }: { roadbook: Roadbook }) {
+function AnalyticsContent({ roadbook }: { roadbook: Roadbook }) {
   const dayData = roadbook.days.map((day, index) => {
     const stops = visibleStops(day)
     const distance = stops.reduce(
@@ -353,6 +355,42 @@ export function AnalyticsDashboard({ roadbook }: { roadbook: Roadbook }) {
       </div>
     </section>
   )
+}
+
+export function AnalyticsDashboard({ roadbook }: { roadbook: Roadbook }) {
+  const [analysis, setAnalysis] = useState({
+    version: '',
+    progress: 8,
+    ready: false,
+  })
+
+  useEffect(() => {
+    const version = roadbook.updatedAt
+    const stages = [
+      window.setTimeout(() => setAnalysis({ version, progress: 38, ready: false }), 70),
+      window.setTimeout(() => setAnalysis({ version, progress: 72, ready: false }), 150),
+      window.setTimeout(() => setAnalysis({ version, progress: 100, ready: false }), 230),
+      window.setTimeout(() => setAnalysis({ version, progress: 100, ready: true }), 300),
+    ]
+    return () => stages.forEach((timeout) => window.clearTimeout(timeout))
+  }, [roadbook.updatedAt])
+
+  if (analysis.version !== roadbook.updatedAt || !analysis.ready) {
+    const progress = analysis.version === roadbook.updatedAt ? analysis.progress : 8
+    return (
+      <section className="analytics-progress" aria-live="polite">
+        <BarChart3 size={24} />
+        <strong>正在分析行程</strong>
+        <span>费用、里程、时长与节点数据</span>
+        <div>
+          <i style={{ width: `${progress}%` }} />
+        </div>
+        <em>{progress}%</em>
+      </section>
+    )
+  }
+
+  return <AnalyticsContent roadbook={roadbook} />
 }
 
 export default AnalyticsDashboard

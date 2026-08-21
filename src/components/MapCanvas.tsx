@@ -20,6 +20,9 @@ interface MapCanvasProps {
   onSelectStop: (stopId: string) => void
   onEditStop: (stop: TripStop, previousStop: TripStop | null, dayId: string) => void
   onRoutesResolved: (legs: ResolvedLeg[]) => void
+  onAddPlacePhoto: (stopId: string, file: File) => Promise<void>
+  onAddPlaceNote: (stopId: string, text: string) => void
+  readOnly: boolean
 }
 
 export function MapCanvas(props: MapCanvasProps) {
@@ -33,6 +36,9 @@ export function MapCanvas(props: MapCanvasProps) {
     onSelectStop: props.onSelectStop,
     onEditStop: props.onEditStop,
     onRoutesResolved: props.onRoutesResolved,
+    onAddPlacePhoto: props.onAddPlacePhoto,
+    onAddPlaceNote: props.onAddPlaceNote,
+    readOnly: props.readOnly,
   }
 
   return (

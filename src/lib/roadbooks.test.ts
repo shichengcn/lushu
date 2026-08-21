@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   buildShareUrl,
   createRoadbook,
+  hydratePlaceLibrary,
   loadRoadbooks,
+  migrateRoadbookV6,
   normalizeRoadbook,
   parseSharedRoadbook,
   qingganRoadbook,
@@ -22,6 +24,7 @@ import {
   routeGroupsForScope,
 } from '@/lib/map-routes'
 import { gcj02ToBd09 } from '@/lib/baidu'
+import { placeLibraryKey } from '@/lib/place-media'
 
 const storage = new Map<string, string>()
 Object.defineProperty(globalThis, 'localStorage', {
@@ -131,8 +134,9 @@ describe('roadbook data helpers', () => {
       ),
     )
 
-    expect(qingganRoadbook.days).toHaveLength(12)
+    expect(qingganRoadbook.days).toHaveLength(11)
     expect(maximum).toBeLessThanOrEqual(500)
+    expect(JSON.stringify(qingganRoadbook)).not.toContain('可可西里')
   })
 
   it('excludes hidden nodes from expense totals', () => {
@@ -165,14 +169,60 @@ describe('roadbook data helpers', () => {
 
   it('rejects implausible navigation detours instead of drawing a false route', () => {
     const returnGroup = globalDrivingGroups(qingganRoadbook).find(
-      (group) =>
-        group.dayId === 'qg-day-10' &&
-        group.stops[0].id === 'qg-sonamdajie',
+      (group) => group.dayId === 'qg-day-11',
     )
 
     expect(returnGroup).toBeDefined()
-    expect(isPlausibleRouteDistance(returnGroup!, 159)).toBe(true)
+    expect(isPlausibleRouteDistance(returnGroup!, 405)).toBe(true)
     expect(isPlausibleRouteDistance(returnGroup!, 1224.7)).toBe(false)
+  })
+
+  it('removes the legacy Kekexili day and moves following dates forward', () => {
+    const legacy = structuredClone(qingganRoadbook)
+    legacy.title = '青甘大环线 · 反向 12 日'
+    legacy.summary += '，含可可西里保护站往返。'
+    legacy.days.splice(9, 0, {
+      id: 'qg-day-10',
+      date: '2026-10-04',
+      title: '可可西里保护站往返',
+      stops: [],
+    })
+    legacy.days[10].date = '2026-10-05'
+    legacy.days[11].date = '2026-10-06'
+
+    const migrated = migrateRoadbookV6(legacy)
+
+    expect(migrated.days).toHaveLength(11)
+    expect(migrated.days.some((day) => day.id === 'qg-day-10')).toBe(false)
+    expect(migrated.days.find((day) => day.id === 'qg-day-11')?.date).toBe('2026-10-04')
+    expect(migrated.endDate).toBe('2026-10-05')
+    expect(JSON.stringify(migrated)).not.toContain('可可西里')
+  })
+
+  it('keeps place media in the roadbook library independently from nodes', () => {
+    const hydrated = hydratePlaceLibrary(structuredClone(sampleRoadbook))
+    const stop = hydrated.days[0].stops[0]
+    const key = placeLibraryKey(stop)
+
+    hydrated.days[0].stops.shift()
+
+    expect(hydrated.placeLibrary[key]?.photos).toHaveLength(2)
+    expect(hydrated.placeLibrary[key]?.name).toBe(stop.name)
+  })
+
+  it('reconnects route groups around hidden stops', () => {
+    const roadbook = structuredClone(sampleRoadbook)
+    roadbook.days[0].stops[1].hidden = true
+    const groups = routeGroupsForScope(roadbook, {
+      mode: 'day',
+      dayId: roadbook.days[0].id,
+    })
+
+    expect(groups[0].stops.map((stop) => stop.id)).toEqual([
+      roadbook.days[0].stops[0].id,
+      roadbook.days[0].stops[2].id,
+      roadbook.days[0].stops[3].id,
+    ])
   })
 
   it('limits day and leg scopes to their ordered driving stops', () => {

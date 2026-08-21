@@ -2,6 +2,7 @@ import {
   compressToEncodedURIComponent,
   decompressFromEncodedURIComponent,
 } from 'lz-string'
+import { ensurePlaceLibraryEntry, normalizePlaceLibrary } from '@/lib/place-media'
 import type {
   ExpenseCategory,
   ExpenseItem,
@@ -19,6 +20,7 @@ import type {
 const STORAGE_KEY = 'tuji-roadbooks-v2'
 const BACKUP_STORAGE_KEY = 'tuji-roadbooks-v2-backup'
 const LEGACY_STORAGE_KEY = 'tuji-roadbooks-v1'
+const STORAGE_SAVED_AT_KEY = 'tuji-roadbooks-v2-saved-at'
 
 export const DAY_COLORS = [
   '#10a7a2',
@@ -308,6 +310,7 @@ export const sampleRoadbook: Roadbook = {
     { id: 'traveler-hangzhou-2', name: '同行人', color: '#ef6548' },
   ],
   days: sampleDays,
+  placeLibrary: {},
   createdAt: '2026-08-20T08:00:00.000Z',
   updatedAt: '2026-08-20T08:00:00.000Z',
 }
@@ -994,81 +997,14 @@ const qingganDays: TripDay[] = [
         stayMinutes: 780,
         participantIds: BOTH,
         expenses: [qingganExpense('golmud-hotel-1', '格尔木住宿', 460, 'hotel', SHI_CHENG)],
-        notes: [qingganNote('kekexili-prepare', '前台确认次日G109路况，准备氧气、保暖衣和热水。')],
+        notes: [qingganNote('golmud-rest', '抵达后补充物资并休息，次日沿德小高速前往乌兰。')],
         leg: createLeg('driving', 66, 80, { roadType: 'highway', signal: 'good' }),
       }),
     ],
   },
   {
-    id: 'qg-day-10',
-    date: '2026-10-04',
-    title: '可可西里北缘 · 昆仑山口往返',
-    stops: [
-      seedStop({
-        id: 'qg-golmud-start',
-        name: '格尔木凯邦大酒店',
-        address: '格尔木市察尔汗南路8号',
-        location: [94.924954, 36.392885],
-        type: 'hotel',
-        arrivalTime: '06:10',
-        departureTime: '06:30',
-        participantIds: BOTH,
-      }),
-      seedStop({
-        id: 'qg-golmud-fuel',
-        name: '中国石油南郊加油站',
-        address: '格尔木市盐桥南路110号',
-        location: [94.857992, 36.370666],
-        type: 'fuel',
-        arrivalTime: '06:45',
-        departureTime: '07:05',
-        stayMinutes: 20,
-        participantIds: BOTH,
-        expenses: [qingganExpense('golmud-fuel', '可可西里前加满', 500, 'fuel', SHI_CHENG)],
-        notes: [qingganNote('kekexili-fuel', '确认油量、备胎、氧气和离线地图，不离开G109主路。')],
-        leg: createLeg('driving', 8, 16, { roadType: 'mixed', signal: 'good' }),
-      }),
-      seedStop({
-        id: 'qg-sonamdajie',
-        name: '可可西里国家级自然保护区（昆仑山口）',
-        address: '格尔木市郭勒木德镇G109昆仑山口',
-        location: [94.067003, 35.639114],
-        type: 'scenic',
-        arrivalTime: '10:40',
-        departureTime: '12:40',
-        stayMinutes: 120,
-        participantIds: BOTH,
-        notes: [
-          qingganNote('kekexili-rule', '只在G109昆仑山口的开放区域停留，不驶入保护区腹地，不追逐野生动物。'),
-          qingganNote('kekexili-altitude', '海拔约4700米，如有明显高反立即返程。'),
-        ],
-        leg: createLeg('driving', 151, 205, {
-          roadType: 'national',
-          signal: 'none',
-          notes: [qingganNote('g109-signal', '昆仑山口以南长距离无稳定信号，保持车辆结伴与离线导航。')],
-        }),
-      }),
-      seedStop({
-        id: 'qg-golmud-hotel-return',
-        name: '格尔木凯邦大酒店',
-        address: '格尔木市察尔汗南路8号',
-        location: [94.924954, 36.392885],
-        type: 'hotel',
-        arrivalTime: '16:20',
-        departureTime: '07:00',
-        stayMinutes: 780,
-        participantIds: BOTH,
-        expenses: [qingganExpense('golmud-hotel-2', '格尔木续住', 460, 'hotel', SHI_JINGJING)],
-        leg: createLeg('driving', 159, 220, {
-          roadType: 'national',
-          signal: 'none',
-        }),
-      }),
-    ],
-  },
-  {
     id: 'qg-day-11',
-    date: '2026-10-05',
+    date: '2026-10-04',
     title: '格尔木至乌兰',
     stops: [
       seedStop({
@@ -1124,7 +1060,7 @@ const qingganDays: TripDay[] = [
   },
   {
     id: 'qg-day-12',
-    date: '2026-10-06',
+    date: '2026-10-05',
     title: '青海湖 · 返回西宁',
     stops: [
       seedStop({
@@ -1244,15 +1180,16 @@ const qingganDays: TripDay[] = [
 
 export const qingganRoadbook: Roadbook = {
   id: 'roadbook-qinggan-reverse',
-  title: '青甘大环线 · 反向 12 日',
-  summary: '石成与石晶晶长沙会合后飞西宁，沿门源、祁连、河西走廊和柴达木盆地反向环行，含可可西里保护站往返。',
+  title: '青甘大环线 · 反向 11 日',
+  summary: '石成与石晶晶长沙会合后飞西宁，沿门源、祁连、河西走廊和柴达木盆地反向环行。',
   startDate: '2026-09-24',
-  endDate: '2026-10-06',
+  endDate: '2026-10-05',
   travelers: [
     { id: SHI_CHENG, name: '石成', color: '#10a7a2' },
     { id: SHI_JINGJING, name: '石晶晶', color: '#ef6548' },
   ],
   days: qingganDays,
+  placeLibrary: {},
   createdAt: '2026-08-20T08:00:00.000Z',
   updatedAt: '2026-08-20T08:00:00.000Z',
 }
@@ -1355,9 +1292,81 @@ export function normalizeRoadbook(raw: any): Roadbook {
     days: days.length
       ? days
       : [{ id: createId('day'), date: fallbackDate, title: '第 1 天', stops: [] }],
+    placeLibrary: normalizePlaceLibrary(raw?.placeLibrary),
     createdAt: raw?.createdAt || now,
     updatedAt: raw?.updatedAt || now,
   }
+}
+
+export function migrateRoadbookV6(roadbook: Roadbook): Roadbook {
+  if (roadbook.id !== 'roadbook-qinggan-reverse') return roadbook
+  const hasRemovedDay = roadbook.days.some(
+    (day) =>
+      day.id === 'qg-day-10' ||
+      day.title.includes('可可西里') ||
+      day.title.includes('昆仑山口'),
+  )
+  const hasRemovedText =
+    roadbook.title.includes('12 日') ||
+    roadbook.summary.includes('可可西里') ||
+    Object.keys(roadbook.placeLibrary).some(
+      (key) => key.includes('可可西里') || key.includes('昆仑山口'),
+    )
+  if (!hasRemovedDay && !hasRemovedText) return roadbook
+
+  const days = roadbook.days
+    .filter(
+      (day) =>
+        day.id !== 'qg-day-10' &&
+        !day.title.includes('可可西里') &&
+        !day.title.includes('昆仑山口'),
+    )
+    .map((day) => ({
+      ...day,
+      date:
+        day.id === 'qg-day-11'
+          ? '2026-10-04'
+          : day.id === 'qg-day-12'
+            ? '2026-10-05'
+            : day.date,
+      stops: day.stops.map((stop) => ({
+        ...stop,
+        notes: stop.notes.filter(
+          (note) => !note.text.includes('可可西里') && !note.text.includes('昆仑山口'),
+        ),
+      })),
+    }))
+  const placeLibrary = Object.fromEntries(
+    Object.entries(roadbook.placeLibrary).filter(
+      ([key, entry]) =>
+        !key.includes('可可西里') &&
+        !key.includes('昆仑山口') &&
+        !entry.name.includes('可可西里') &&
+        !entry.name.includes('昆仑山口'),
+    ),
+  )
+
+  return {
+    ...roadbook,
+    title: roadbook.title.replace(/反向\s*12\s*日/, '反向 11 日'),
+    summary: roadbook.summary
+      .replace(/[，,]?含可可西里[^。]*[。.]?/, '。')
+      .replace(/可可西里[^，。]*[，。]?/g, ''),
+    endDate: '2026-10-05',
+    days,
+    placeLibrary,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+export function hydratePlaceLibrary(roadbook: Roadbook): Roadbook {
+  const placeLibrary = roadbook.days
+    .flatMap((day) => day.stops)
+    .reduce(
+      (library, stop) => ensurePlaceLibraryEntry(library, stop),
+      roadbook.placeLibrary,
+    )
+  return { ...roadbook, placeLibrary }
 }
 
 export function loadRoadbooks(): Roadbook[] {
@@ -1377,7 +1386,9 @@ export function loadRoadbooks(): Roadbook[] {
     try {
       const parsed = JSON.parse(raw)
       if (!Array.isArray(parsed) || !parsed.length) continue
-      const normalized = parsed.map(normalizeRoadbook)
+      const normalized = parsed.map((roadbook) =>
+        hydratePlaceLibrary(migrateRoadbookV6(normalizeRoadbook(roadbook))),
+      )
       if (!normalized.some((roadbook) => roadbook.id === qingganRoadbook.id)) {
         normalized.unshift(qingganRoadbook)
       }
@@ -1395,7 +1406,28 @@ export function loadRoadbooks(): Roadbook[] {
     }
   }
 
-  return [qingganRoadbook, sampleRoadbook]
+  return [hydratePlaceLibrary(qingganRoadbook), hydratePlaceLibrary(sampleRoadbook)]
+}
+
+export function hasStoredRoadbooks() {
+  try {
+    return Boolean(localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY))
+  } catch {
+    return false
+  }
+}
+
+export function storedRoadbooksSavedAt() {
+  try {
+    const explicit = localStorage.getItem(STORAGE_SAVED_AT_KEY)
+    if (explicit) return explicit
+    return loadRoadbooks()
+      .map((roadbook) => roadbook.updatedAt)
+      .sort()
+      .at(-1) || ''
+  } catch {
+    return ''
+  }
 }
 
 export function saveRoadbooks(roadbooks: Roadbook[]) {
@@ -1415,6 +1447,7 @@ export function saveRoadbooks(roadbooks: Roadbook[]) {
 
   try {
     localStorage.setItem(STORAGE_KEY, next)
+    localStorage.setItem(STORAGE_SAVED_AT_KEY, new Date().toISOString())
   } catch {
     // A backup can consume the remaining localStorage quota. Current data wins.
     try {
@@ -1423,6 +1456,7 @@ export function saveRoadbooks(roadbooks: Roadbook[]) {
       // Retry the primary write even if backup cleanup is unavailable.
     }
     localStorage.setItem(STORAGE_KEY, next)
+    localStorage.setItem(STORAGE_SAVED_AT_KEY, new Date().toISOString())
   }
 }
 
@@ -1439,6 +1473,7 @@ export function createRoadbook(): Roadbook {
     endDate: date,
     travelers: [{ id: createId('traveler'), name: '我', color: DAY_COLORS[0] }],
     days: [{ id: createId('day'), date, title: '第 1 天', stops: [] }],
+    placeLibrary: {},
     createdAt: timestamp,
     updatedAt: timestamp,
   }
@@ -1584,6 +1619,16 @@ export function reverseDay(day: TripDay): TripDay {
 export function serializeRoadbookForShare(roadbook: Roadbook) {
   return {
     ...roadbook,
+    placeLibrary: Object.fromEntries(
+      Object.entries(roadbook.placeLibrary).map(([key, entry]) => [
+        key,
+        {
+          ...entry,
+          photos: entry.photos.filter((photo) => photo.source === 'generated'),
+          notes: entry.notes.map(({ imageDataUrl: _image, ...note }) => note),
+        },
+      ]),
+    ),
     days: roadbook.days.map((day) => ({
       ...day,
       stops: day.stops.map((stop) => ({

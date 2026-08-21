@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import {
   ArrowDown,
   ArrowLeft,
@@ -9,6 +8,7 @@ import {
   BusFront,
   Car,
   Clock3,
+  ChevronDown,
   Eye,
   EyeOff,
   Fuel,
@@ -26,6 +26,8 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react'
+import { PlaceThumbnail } from '@/components/PlaceMediaGallery'
+import { placeLibraryEntry } from '@/lib/place-media'
 import { DAY_COLORS, legCost, stopCost, totalCost, visibleStops } from '@/lib/roadbooks'
 import type { PlaceType, Roadbook, TransportMode, TripStop } from '@/types'
 
@@ -121,12 +123,6 @@ export function ItineraryPanel({
   onToggleHidden,
   onDeleteStop,
 }: ItineraryPanelProps) {
-  const listRef = useRef<HTMLDivElement>(null)
-  const dayRefs = useRef<Record<string, HTMLElement | null>>({})
-  useEffect(() => {
-    dayRefs.current[activeDayId]?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  }, [activeDayId])
-
   return (
     <aside className="itinerary-panel">
       <header className="trip-overview">
@@ -158,42 +154,11 @@ export function ItineraryPanel({
         </div>
       </header>
 
-      <div className="day-strip" role="tablist" aria-label="行程日期">
-        {roadbook.days.map((day, index) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={day.id === activeDayId}
-            className={day.id === activeDayId ? 'is-active' : ''}
-            key={day.id}
-            onClick={() => onSelectDay(day.id)}
-            style={{ '--day-color': DAY_COLORS[index % DAY_COLORS.length] } as React.CSSProperties}
-          >
-            <strong>D{index + 1}</strong>
-            <span>{formatCompactDate(day.date)}</span>
-          </button>
-        ))}
-        {!readOnly ? (
-          <button
-            type="button"
-            className="add-day"
-            onClick={onAddDay}
-            aria-label="添加一天"
-            title="在当前天之后添加"
-          >
-            <Plus size={18} />
-          </button>
-        ) : null}
-      </div>
-
-      <div className="continuous-itinerary" ref={listRef}>
+      <div className="continuous-itinerary" role="tablist" aria-label="按天行程">
         {roadbook.days.map((day, dayIndex) => (
           <section
-            className={`day-section${day.id === activeDayId ? ' is-active' : ''}`}
+            className={`day-section${day.id === activeDayId ? ' is-active is-expanded' : ''}`}
             key={day.id}
-            ref={(element) => {
-              dayRefs.current[day.id] = element
-            }}
             onDragOver={(event) => {
               if (!readOnly) event.preventDefault()
             }}
@@ -211,11 +176,27 @@ export function ItineraryPanel({
               className="day-toolbar"
               style={{ '--day-color': DAY_COLORS[dayIndex % DAY_COLORS.length] } as React.CSSProperties}
             >
-              <button type="button" className="day-heading" onClick={() => onSelectDay(day.id)}>
-                <span>第 {dayIndex + 1} 天 · {formatCompactDate(day.date)}</span>
-                <strong>{day.title}</strong>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={day.id === activeDayId}
+                className="day-heading"
+                onClick={() => onSelectDay(day.id)}
+              >
+                <b className="day-number-large">{dayIndex + 1}</b>
+                <span className="day-heading-copy">
+                  <small>第 {dayIndex + 1} 天 · {formatCompactDate(day.date)}</small>
+                  <strong>{day.title}</strong>
+                  <em>
+                    {visibleStops(day)[0]?.name || '暂无节点'}
+                    {visibleStops(day).length > 1
+                      ? ` → ${visibleStops(day).at(-1)?.name}`
+                      : ''}
+                  </em>
+                </span>
+                <span className="day-distance">{dayDistance(day.stops).toFixed(0)} km</span>
+                <ChevronDown className="day-expand-icon" size={18} />
               </button>
-              <span className="day-distance">约 {dayDistance(day.stops).toFixed(1)} km</span>
               {!readOnly ? (
                 <div className="day-actions">
                   <button
@@ -240,7 +221,8 @@ export function ItineraryPanel({
               ) : null}
             </div>
 
-            <div className="day-stop-list">
+            {day.id === activeDayId ? <div className="day-collapsible-content">
+              <div className="day-stop-list">
               {!day.stops.length ? (
                 <div className="empty-day compact">
                   <MapPin size={23} />
@@ -260,6 +242,12 @@ export function ItineraryPanel({
                 const travelerMap = roadbook.travelers.filter((traveler) =>
                   stop.participantIds.includes(traveler.id),
                 )
+                const visibleOrdinal = stop.hidden
+                  ? null
+                  : day.stops
+                      .slice(0, index + 1)
+                      .filter((candidate) => !candidate.hidden).length
+                const photo = placeLibraryEntry(roadbook, stop).photos[0]
 
                 return (
                   <div className={`stop-group${stop.hidden ? ' is-hidden' : ''}`} key={stop.id}>
@@ -308,7 +296,7 @@ export function ItineraryPanel({
                         onClick={() => onSelectStop(stop.id)}
                         aria-label={`在地图上查看${stop.name}`}
                       >
-                        {stop.hidden ? <EyeOff size={15} /> : index + 1}
+                        {stop.hidden ? <EyeOff size={18} /> : visibleOrdinal}
                       </button>
                       <button
                         type="button"
@@ -320,7 +308,12 @@ export function ItineraryPanel({
                           {meta.label}
                           {stop.hidden ? <i>已隐藏</i> : null}
                         </span>
-                        <strong>{stop.name}</strong>
+                        <span className="stop-title-row">
+                          {photo ? (
+                            <PlaceThumbnail photo={photo} />
+                          ) : null}
+                          <strong>{stop.name}</strong>
+                        </span>
                         <small>{stop.address || '尚未填写地址'}</small>
                         <span className="stop-timing">
                           <Clock3 size={13} />
@@ -419,16 +412,23 @@ export function ItineraryPanel({
                   </div>
                 )
               })}
-            </div>
+              </div>
 
-            {!readOnly ? (
-              <button type="button" className="add-stop-button" onClick={() => onAddStop(day.id)}>
-                <Plus size={17} />
-                添加到第 {dayIndex + 1} 天
-              </button>
-            ) : null}
+              {!readOnly ? (
+                <button type="button" className="add-stop-button" onClick={() => onAddStop(day.id)}>
+                  <Plus size={17} />
+                  添加到第 {dayIndex + 1} 天
+                </button>
+              ) : null}
+            </div> : null}
           </section>
         ))}
+        {!readOnly ? (
+          <button type="button" className="add-day-vertical" onClick={onAddDay}>
+            <Plus size={18} />
+            在当前天后添加一天
+          </button>
+        ) : null}
       </div>
     </aside>
   )

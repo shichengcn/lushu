@@ -7,21 +7,32 @@ import {
   createExpense,
   createId,
   createLeg,
+  createNote,
   createRoadbook,
   importRoadbook,
+  hasStoredRoadbooks,
+  hydratePlaceLibrary,
   loadRoadbooks,
+  migrateRoadbookV6,
+  normalizeRoadbook,
   parseSharedRoadbook,
   recalculateDayDates,
   reverseDay,
   saveRoadbooks,
+  storedRoadbooksSavedAt,
 } from '@/lib/roadbooks'
-import { cloudShareId, fetchCloudRoadbook } from '@/lib/sharing'
+import { loadDatabaseSnapshot, saveLocalDatabase } from '@/lib/local-database'
+import {
+  compressPlacePhoto,
+  ensurePlaceLibraryEntry,
+  placeLibraryEntry,
+  placeLibraryKey,
+} from '@/lib/place-media'
 import type { ResolvedLeg, Roadbook, TripDay, TripStop } from '@/types'
 
 const INITIAL_SHARED_ROADBOOK = parseSharedRoadbook()
 const INITIAL_ROADBOOKS = loadRoadbooks()
 const INITIAL_ACTIVE_ROADBOOK = INITIAL_SHARED_ROADBOOK || INITIAL_ROADBOOKS[0]
-const INITIAL_CLOUD_SHARE_ID = cloudShareId()
 
 function relinkStops(stops: TripStop[]) {
   let previousVisible: TripStop | null = null
@@ -85,7 +96,9 @@ export function useRoadbookController() {
   const [editingDayId, setEditingDayId] = useState('')
   const [previousStop, setPreviousStop] = useState<TripStop | null>(null)
   const [tripDraft, setTripDraft] = useState<Roadbook | null>(null)
+  const [databaseReady, setDatabaseReady] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
+  const databaseErrorShownRef = useRef(false)
 
   const activeRoadbook =
     roadbooks.find((roadbook) => roadbook.id === activeRoadbookId) || roadbooks[0]
@@ -94,38 +107,46 @@ export function useRoadbookController() {
   const readOnly = mode === 'view' || isSharedPreview
 
   useEffect(() => {
-    if (!INITIAL_CLOUD_SHARE_ID) return
     let cancelled = false
-    void fetchCloudRoadbook(INITIAL_CLOUD_SHARE_ID)
-      .then((shared) => {
-        if (cancelled) return
-        const now = new Date().toISOString()
-        const preview = {
-          ...shared,
-          id: `cloud-${INITIAL_CLOUD_SHARE_ID}`,
-          title: `${shared.title}（分享）`,
-          createdAt: now,
-          updatedAt: now,
-        }
-        setRoadbooks((current) => [preview, ...current])
-        setActiveRoadbookId(preview.id)
-        setActiveDayId(preview.days[0].id)
-        setSharedPreviewId(preview.id)
-        setIsSharedPreview(true)
-        setMode('view')
-      })
-      .catch(() => toast.error('分享链接不存在或已过期'))
+    void loadDatabaseSnapshot().then((snapshot) => {
+      if (cancelled) return
+      const browserHasData = hasStoredRoadbooks()
+      const databaseWins =
+        snapshot &&
+        (!browserHasData ||
+          (snapshot.source === 'local' && snapshot.savedAt > storedRoadbooksSavedAt()))
+      if (databaseWins) {
+        const restored = snapshot.roadbooks.map((roadbook) =>
+          hydratePlaceLibrary(migrateRoadbookV6(normalizeRoadbook(roadbook))),
+        )
+        setRoadbooks(restored)
+        setActiveRoadbookId(restored[0].id)
+        setActiveDayId(restored[0].days[0].id)
+      }
+      setDatabaseReady(true)
+    })
     return () => {
       cancelled = true
     }
   }, [])
 
   useEffect(() => {
+    if (!databaseReady) return
     const persisted = isSharedPreview
       ? roadbooks.filter((roadbook) => roadbook.id !== sharedPreviewId)
       : roadbooks
-    if (persisted.length) saveRoadbooks(persisted)
-  }, [isSharedPreview, roadbooks, sharedPreviewId])
+    if (!persisted.length) return
+    saveRoadbooks(persisted)
+    const timeout = window.setTimeout(() => {
+      void saveLocalDatabase(persisted).catch(() => {
+        if (!databaseErrorShownRef.current) {
+          databaseErrorShownRef.current = true
+          toast.error('本地数据库写入失败，浏览器副本仍已保存')
+        }
+      })
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [databaseReady, isSharedPreview, roadbooks, sharedPreviewId])
 
   const updateRoadbook = useCallback(
     (transform: (roadbook: Roadbook) => Roadbook, touch = true) => {
@@ -232,20 +253,83 @@ export function useRoadbookController() {
 
   const saveStop = (stop: TripStop) => {
     const targetDayId = editingDayId || activeDay.id
-    updateRoadbook((roadbook) => ({
-      ...roadbook,
-      days: roadbook.days.map((day) => {
-        if (day.id !== targetDayId) return day
-        const exists = day.stops.some((candidate) => candidate.id === stop.id)
-        const stops = exists
-          ? day.stops.map((candidate) => (candidate.id === stop.id ? stop : candidate))
-          : [...day.stops, stop]
-        return { ...day, stops: relinkStops(stops) }
-      }),
-    }))
+    updateRoadbook((roadbook) => {
+      const placeLibrary = ensurePlaceLibraryEntry(roadbook.placeLibrary, stop)
+      return {
+        ...roadbook,
+        placeLibrary,
+        days: roadbook.days.map((day) => {
+          if (day.id !== targetDayId) return day
+          const exists = day.stops.some((candidate) => candidate.id === stop.id)
+          const stops = exists
+            ? day.stops.map((candidate) => (candidate.id === stop.id ? stop : candidate))
+            : [...day.stops, stop]
+          return { ...day, stops: relinkStops(stops) }
+        }),
+      }
+    })
     setActiveDayId(targetDayId)
     setSelectedStopId(stop.id)
     toast.success(editingStop ? '节点已更新' : '节点已添加')
+  }
+
+  const addPlacePhoto = async (stopId: string, file: File) => {
+    try {
+      const url = await compressPlacePhoto(file)
+      updateRoadbook((roadbook) => {
+        const stop = roadbook.days
+          .flatMap((day) => day.stops)
+          .find((candidate) => candidate.id === stopId)
+        if (!stop) return roadbook
+        const entry = placeLibraryEntry(roadbook, stop)
+        return {
+          ...roadbook,
+          placeLibrary: {
+            ...roadbook.placeLibrary,
+            [placeLibraryKey(stop)]: {
+              ...entry,
+              photos: [
+                ...entry.photos,
+                {
+                  id: createId('place-photo'),
+                  url,
+                  caption: `${stop.name}自定义照片`,
+                  source: 'upload',
+                  createdAt: new Date().toISOString(),
+                },
+              ],
+              updatedAt: new Date().toISOString(),
+            },
+          },
+        }
+      })
+      toast.success('照片已加入地点图库')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '照片保存失败')
+    }
+  }
+
+  const addPlaceNote = (stopId: string, text: string) => {
+    if (!text.trim()) return
+    updateRoadbook((roadbook) => {
+      const stop = roadbook.days
+        .flatMap((day) => day.stops)
+        .find((candidate) => candidate.id === stopId)
+      if (!stop) return roadbook
+      const entry = placeLibraryEntry(roadbook, stop)
+      return {
+        ...roadbook,
+        placeLibrary: {
+          ...roadbook.placeLibrary,
+          [placeLibraryKey(stop)]: {
+            ...entry,
+            notes: [...entry.notes, createNote(text.trim())],
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      }
+    })
+    toast.success('注意事项已加入地点库')
   }
 
   const moveStop = (dayId: string, stopId: string, direction: -1 | 1) => {
@@ -303,6 +387,7 @@ export function useRoadbookController() {
           : day,
       ),
     }))
+    if (selectedStopId === stopId) setSelectedStopId(null)
     toast.success('节点可见性已更新')
   }
 
@@ -523,6 +608,8 @@ export function useRoadbookController() {
     openAddStop,
     openEditStop,
     saveStop,
+    addPlacePhoto,
+    addPlaceNote,
     moveStop,
     moveStopToDay,
     toggleHidden,

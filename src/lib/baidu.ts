@@ -5,6 +5,11 @@ const BAIDU_KEY =
 
 export const BAIDU_REQUEST_INTERVAL_MS = 500
 export const BAIDU_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000] as const
+const MAX_BROWSER_TIMEOUT_MS = 2_147_000_000
+
+export function baiduRetryDelay(attempt: number) {
+  return Math.min(1000 * 2 ** attempt, MAX_BROWSER_TIMEOUT_MS)
+}
 
 declare global {
   interface Window {
@@ -16,7 +21,7 @@ declare global {
 let baiduPromise: Promise<any> | null = null
 const baiduRequestQueue = new RateLimitedRetryQueue({
   intervalMs: BAIDU_REQUEST_INTERVAL_MS,
-  retryDelaysMs: BAIDU_RETRY_DELAYS_MS,
+  retryDelayMs: baiduRetryDelay,
 })
 
 export function queueBaiduRequest<T>(

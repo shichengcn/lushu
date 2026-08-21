@@ -1,6 +1,7 @@
 export interface RetryQueueOptions {
   intervalMs: number
-  retryDelaysMs: readonly number[]
+  retryDelaysMs?: readonly number[]
+  retryDelayMs?: (attempt: number) => number | null
   now?: () => number
   sleep?: (milliseconds: number) => Promise<void>
 }
@@ -20,7 +21,7 @@ function cancellationError() {
 
 export class RateLimitedRetryQueue {
   private readonly intervalMs: number
-  private readonly retryDelaysMs: readonly number[]
+  private readonly retryDelayMs: (attempt: number) => number | null
   private readonly now: () => number
   private readonly sleep: (milliseconds: number) => Promise<void>
   private gate: Promise<void> = Promise.resolve()
@@ -28,7 +29,9 @@ export class RateLimitedRetryQueue {
 
   constructor(options: RetryQueueOptions) {
     this.intervalMs = options.intervalMs
-    this.retryDelaysMs = options.retryDelaysMs
+    this.retryDelayMs =
+      options.retryDelayMs ||
+      ((attempt) => options.retryDelaysMs?.[attempt] ?? null)
     this.now = options.now || Date.now
     this.sleep = options.sleep || defaultSleep
   }
@@ -56,10 +59,10 @@ export class RateLimitedRetryQueue {
       try {
         return await request(attempt)
       } catch (error) {
-        if (options.signal?.aborted || attempt >= this.retryDelaysMs.length) {
+        const delayMs = this.retryDelayMs(attempt)
+        if (options.signal?.aborted || delayMs === null) {
           throw error
         }
-        const delayMs = this.retryDelaysMs[attempt]
         options.onRetry?.(attempt + 1, delayMs, error)
         await this.sleep(delayMs)
         if (options.signal?.aborted) throw cancellationError()
