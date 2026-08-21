@@ -1,5 +1,10 @@
+import { RateLimitedRetryQueue, type QueueRunOptions } from '@/lib/async-request-queue'
+
 const BAIDU_KEY =
   import.meta.env.VITE_BAIDU_MAP_KEY || 'RggonQuu8xGmZCLRMgpg4OLt5BaRr0Wd'
+
+export const BAIDU_REQUEST_INTERVAL_MS = 500
+export const BAIDU_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000] as const
 
 declare global {
   interface Window {
@@ -9,6 +14,17 @@ declare global {
 }
 
 let baiduPromise: Promise<any> | null = null
+const baiduRequestQueue = new RateLimitedRetryQueue({
+  intervalMs: BAIDU_REQUEST_INTERVAL_MS,
+  retryDelaysMs: BAIDU_RETRY_DELAYS_MS,
+})
+
+export function queueBaiduRequest<T>(
+  request: (attempt: number) => Promise<T>,
+  options?: QueueRunOptions,
+) {
+  return baiduRequestQueue.run(request, options)
+}
 
 export function loadBaiduMap() {
   if (window.BMapGL) return Promise.resolve(window.BMapGL)

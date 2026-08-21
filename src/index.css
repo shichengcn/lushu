@@ -905,6 +905,28 @@ textarea:focus-visible {
   color: #d98a17;
 }
 
+.map-route-activity {
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(203, 210, 217, 0.9);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #4e5b68;
+  font-size: 12px;
+  padding: 7px 10px;
+  box-shadow: 0 4px 14px rgba(25, 38, 52, 0.12);
+}
+
+.map-route-activity svg {
+  color: #1677d2;
+  animation: spin 1.2s linear infinite;
+}
+
 .mobile-pane-tabs {
   display: none;
 }

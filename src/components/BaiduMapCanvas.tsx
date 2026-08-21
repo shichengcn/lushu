@@ -17,6 +17,7 @@ import {
   buildBaiduPlaceUrl,
   gcj02ToBd09,
   loadBaiduMap,
+  queueBaiduRequest,
 } from '@/lib/baidu'
 import {
   displayDrivingGroups,
@@ -82,21 +83,30 @@ function stopLabel(stop: TripStop, index: number, focusMode: MapFocusMode) {
   return `${index + 1}  ${stop.name}`
 }
 
-function searchBaiduRoute(BMapGL: any, map: any, group: RouteGroup) {
-  return new Promise<BaiduRouteResult | null>((resolve) => {
+function requestBaiduRoute(BMapGL: any, map: any, group: RouteGroup) {
+  return new Promise<BaiduRouteResult>((resolve, reject) => {
     const points = group.stops.map((stop) => {
       const [lng, lat] = gcj02ToBd09(stop.location)
       return new BMapGL.Point(lng, lat)
     })
     if (points.length < 2) {
-      resolve(null)
+      reject(new Error('路线节点不足'))
       return
     }
+    let settled = false
     let service: any
+    const timeout = window.setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(new Error('百度路线请求超时'))
+    }, 15000)
     service = new BMapGL.DrivingRoute(map, {
       onSearchComplete: (results: any) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timeout)
         if (service.getStatus() !== 0 || !results?.getPlan?.(0)) {
-          resolve(null)
+          reject(new Error(`百度路线请求失败：${service.getStatus()}`))
           return
         }
         const plan = results.getPlan(0)
@@ -115,7 +125,7 @@ function searchBaiduRoute(BMapGL: any, map: any, group: RouteGroup) {
         }
         const distanceKm = Number(((plan.getDistance?.(false) || 0) / 1000).toFixed(1))
         if (!isPlausibleRouteDistance(group, distanceKm)) {
-          resolve(null)
+          reject(new Error('百度路线距离异常'))
           return
         }
         resolve({
@@ -128,6 +138,19 @@ function searchBaiduRoute(BMapGL: any, map: any, group: RouteGroup) {
     })
     service.search(points[0], points.at(-1), { waypoints: points.slice(1, -1) })
   })
+}
+
+function searchBaiduRoute(
+  BMapGL: any,
+  map: any,
+  group: RouteGroup,
+  signal: AbortSignal,
+  onRetry: () => void,
+) {
+  return queueBaiduRequest(
+    () => requestBaiduRoute(BMapGL, map, group),
+    { signal, onRetry },
+  )
 }
 
 function fitPoints(BMapGL: any, map: any, stops: TripStop[]) {
@@ -152,10 +175,11 @@ export function BaiduMapCanvas({
   const mapRef = useRef<any>(null)
   const baiduRef = useRef<any>(null)
   const generationRef = useRef(0)
-  const routeCacheRef = useRef(new Map<string, BaiduRouteResult | null>())
+  const routeCacheRef = useRef(new Map<string, BaiduRouteResult>())
   const measurePointsRef = useRef<any[]>([])
   const [mapReady, setMapReady] = useState(false)
   const [mapError, setMapError] = useState('')
+  const [routeActivity, setRouteActivity] = useState({ pending: 0, retries: 0 })
   const [focusMode, setFocusMode] = useState<MapFocusMode>('overview')
   const [baseLayer, setBaseLayer] = useState<MapBaseLayer>('standard')
   const [traffic, setTraffic] = useState(false)
@@ -248,6 +272,7 @@ export function BaiduMapCanvas({
     const map = mapRef.current
     if (!mapReady || !BMapGL || !map) return
     const generation = ++generationRef.current
+    const requestController = new AbortController()
     map.clearOverlays()
     const relevantGroups = routeGroupsForScope(roadbook, scope)
     const relevantGroupIds = new Set(relevantGroups.map((group) => group.id))
@@ -316,102 +341,131 @@ export function BaiduMapCanvas({
         (left, right) =>
           Number(relevantGroupIds.has(right.id)) - Number(relevantGroupIds.has(left.id)),
       )
-      for (const group of queue) {
-        if (generationRef.current !== generation) return
-        const cacheKey = group.stops.map((stop) => stop.location.join(',')).join('|')
-        let result = routeCacheRef.current.get(cacheKey)
-        if (result === undefined) {
-          result = await searchBaiduRoute(BMapGL, map, group).catch(() => null)
-          routeCacheRef.current.set(cacheKey, result)
-        }
-        if (!result?.path.length || generationRef.current !== generation) continue
-        const active = scope.mode === 'global' || relevantGroupIds.has(group.id)
-        const color = DAY_COLORS[group.dayIndex % DAY_COLORS.length]
-        const line = new BMapGL.Polyline(result.path, {
-          strokeColor: color,
-          strokeWeight: active ? 7 : 4,
-          strokeOpacity: active ? 0.9 : 0.48,
-        })
-        line.addEventListener('click', () => {
-          if (scope.mode === 'global') {
-            onScopeChange({ mode: 'day', dayId: group.dayId })
-          }
-        })
-        map.addOverlay(line)
-        const labelPairs: Array<{
-          stop: TripStop
-          previous: TripStop
-          text: string
-          daySummary: boolean
-        }> = []
-        if (scope.mode === 'global') {
-          labelPairs.push({
-            stop: group.stops.at(-1)!,
-            previous: group.stops[0],
-            text: `D${group.dayIndex + 1} · ${result.distanceKm.toFixed(0)} km`,
-            daySummary: true,
-          })
-        } else if (active) {
-          labelPairs.push(
-            ...group.stops.slice(1).map((stop, index) => ({
-              stop,
-              previous: group.stops[index],
-              text: `${(stop.legFromPrevious?.distanceKm || 0).toFixed(1)} km`,
-              daySummary: false,
-            })),
-          )
-        }
-        labelPairs.forEach(({ stop, previous, text, daySummary }) => {
-          const midpoint: [number, number] = [
-            (previous.location[0] + stop.location[0]) / 2,
-            (previous.location[1] + stop.location[1]) / 2,
-          ]
-          const [labelLng, labelLat] = gcj02ToBd09(midpoint)
-          const label = new BMapGL.Label(text, {
-            position: new BMapGL.Point(labelLng, labelLat),
-          })
-          label.setStyle({
-            border: `1px solid ${color}`,
-            borderRadius: '4px',
-            background: '#fff',
-            color,
-            cursor: 'pointer',
-            fontSize: '10px',
-            padding: '3px 5px',
-            opacity: active ? '1' : '0.66',
-          })
-          label.addEventListener('click', () => {
-            if (daySummary) {
-              onScopeChange({ mode: 'day', dayId: group.dayId })
-              return
+      setRouteActivity({ pending: queue.length, retries: 0 })
+      await Promise.all(
+        queue.map(async (group) => {
+          try {
+            if (generationRef.current !== generation) return
+            const cacheKey = group.stops.map((stop) => stop.location.join(',')).join('|')
+            let result = routeCacheRef.current.get(cacheKey)
+            if (result === undefined) {
+              try {
+                result = await searchBaiduRoute(
+                  BMapGL,
+                  map,
+                  group,
+                  requestController.signal,
+                  () => {
+                    if (generationRef.current === generation) {
+                      setRouteActivity((current) => ({
+                        ...current,
+                        retries: current.retries + 1,
+                      }))
+                    }
+                  },
+                )
+                routeCacheRef.current.set(cacheKey, result)
+              } catch {
+                return
+              }
             }
-            const nextScope: MapScope = {
-              mode: 'leg',
-              dayId: group.dayId,
-              stopId: stop.id,
-              fromStopId: previous.id,
-            }
-            onScopeChange(nextScope)
-            setSelectedElement({
-              kind: 'leg',
-              dayId: group.dayId,
-              stopId: stop.id,
-              fromStopId: previous.id,
+            if (!result.path.length || generationRef.current !== generation) return
+            const active = scope.mode === 'global' || relevantGroupIds.has(group.id)
+            const color = DAY_COLORS[group.dayIndex % DAY_COLORS.length]
+            const line = new BMapGL.Polyline(result.path, {
+              strokeColor: color,
+              strokeWeight: active ? 7 : 4,
+              strokeOpacity: active ? 0.9 : 0.48,
             })
-          })
-          map.addOverlay(label)
-        })
-        if (group.stops.length === 2) {
-          resolved.push({
-            dayId: group.dayId,
-            fromStopId: group.stops[0].id,
-            stopId: group.stops[1].id,
-            distanceKm: result.distanceKm,
-            durationMinutes: result.durationMinutes,
-            roadNames: result.roadNames,
-          })
-        }
-      }
+            line.addEventListener('click', () => {
+              if (scope.mode === 'global') {
+                onScopeChange({ mode: 'day', dayId: group.dayId })
+              }
+            })
+            map.addOverlay(line)
+            const labelPairs: Array<{
+              stop: TripStop
+              previous: TripStop
+              text: string
+              daySummary: boolean
+            }> = []
+            if (scope.mode === 'global') {
+              labelPairs.push({
+                stop: group.stops.at(-1)!,
+                previous: group.stops[0],
+                text: `D${group.dayIndex + 1} · ${result.distanceKm.toFixed(0)} km`,
+                daySummary: true,
+              })
+            } else if (active) {
+              labelPairs.push(
+                ...group.stops.slice(1).map((stop, index) => ({
+                  stop,
+                  previous: group.stops[index],
+                  text: `${(stop.legFromPrevious?.distanceKm || 0).toFixed(1)} km`,
+                  daySummary: false,
+                })),
+              )
+            }
+            labelPairs.forEach(({ stop, previous, text, daySummary }) => {
+              const midpoint: [number, number] = [
+                (previous.location[0] + stop.location[0]) / 2,
+                (previous.location[1] + stop.location[1]) / 2,
+              ]
+              const [labelLng, labelLat] = gcj02ToBd09(midpoint)
+              const label = new BMapGL.Label(text, {
+                position: new BMapGL.Point(labelLng, labelLat),
+              })
+              label.setStyle({
+                border: `1px solid ${color}`,
+                borderRadius: '4px',
+                background: '#fff',
+                color,
+                cursor: 'pointer',
+                fontSize: '10px',
+                padding: '3px 5px',
+                opacity: active ? '1' : '0.66',
+              })
+              label.addEventListener('click', () => {
+                if (daySummary) {
+                  onScopeChange({ mode: 'day', dayId: group.dayId })
+                  return
+                }
+                const nextScope: MapScope = {
+                  mode: 'leg',
+                  dayId: group.dayId,
+                  stopId: stop.id,
+                  fromStopId: previous.id,
+                }
+                onScopeChange(nextScope)
+                setSelectedElement({
+                  kind: 'leg',
+                  dayId: group.dayId,
+                  stopId: stop.id,
+                  fromStopId: previous.id,
+                })
+              })
+              map.addOverlay(label)
+            })
+            if (group.stops.length === 2) {
+              resolved.push({
+                dayId: group.dayId,
+                fromStopId: group.stops[0].id,
+                stopId: group.stops[1].id,
+                distanceKm: result.distanceKm,
+                durationMinutes: result.durationMinutes,
+                roadNames: result.roadNames,
+              })
+            }
+          } finally {
+            if (generationRef.current === generation) {
+              setRouteActivity((current) => ({
+                ...current,
+                pending: Math.max(0, current.pending - 1),
+              }))
+            }
+          }
+        }),
+      )
       if (generationRef.current === generation && scope.mode === 'leg') {
         onRoutesResolved(resolved)
       }
@@ -421,6 +475,7 @@ export function BaiduMapCanvas({
     const fitStops = relevantGroups.flatMap((group) => group.stops)
     fitPoints(BMapGL, map, fitStops.length ? fitStops : markerEntries.map(({ stop }) => stop))
     return () => {
+      requestController.abort()
       if (generationRef.current === generation) generationRef.current += 1
     }
   }, [
@@ -465,6 +520,14 @@ export function BaiduMapCanvas({
         <div className="map-error">
           <LocateFixed size={16} />
           {mapError}
+        </div>
+      ) : null}
+      {mapReady && routeActivity.pending > 0 ? (
+        <div className="map-route-activity" aria-live="polite">
+          <LocateFixed size={15} />
+          {routeActivity.retries > 0
+            ? `导航重试 ${routeActivity.retries} · 待完成 ${routeActivity.pending}`
+            : `导航排队中 · 待完成 ${routeActivity.pending}`}
         </div>
       ) : null}
 

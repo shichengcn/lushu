@@ -17,6 +17,7 @@ import type {
 } from '@/types'
 
 const STORAGE_KEY = 'tuji-roadbooks-v2'
+const BACKUP_STORAGE_KEY = 'tuji-roadbooks-v2-backup'
 const LEGACY_STORAGE_KEY = 'tuji-roadbooks-v1'
 
 export const DAY_COLORS = [
@@ -1360,33 +1361,69 @@ export function normalizeRoadbook(raw: any): Roadbook {
 }
 
 export function loadRoadbooks(): Roadbook[] {
+  let candidates: Array<string | null>
   try {
-    const currentRaw = localStorage.getItem(STORAGE_KEY)
-    const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY)
-    const raw = currentRaw || legacyRaw
-    if (!raw) return [qingganRoadbook, sampleRoadbook]
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed) || !parsed.length) return [qingganRoadbook, sampleRoadbook]
-    const normalized = parsed.map(normalizeRoadbook)
-    const templateIndex = normalized.findIndex(
-      (roadbook) => roadbook.id === qingganRoadbook.id,
-    )
-    if (templateIndex < 0) {
-      normalized.unshift(qingganRoadbook)
-    } else if (
-      normalized[templateIndex].createdAt === '2026-08-20T08:00:00.000Z' &&
-      normalized[templateIndex].updatedAt === '2026-08-20T08:00:00.000Z'
-    ) {
-      normalized[templateIndex] = qingganRoadbook
-    }
-    return normalized
+    candidates = [
+      localStorage.getItem(STORAGE_KEY),
+      localStorage.getItem(BACKUP_STORAGE_KEY),
+      localStorage.getItem(LEGACY_STORAGE_KEY),
+    ]
   } catch {
     return [qingganRoadbook, sampleRoadbook]
   }
+
+  for (const raw of candidates) {
+    if (!raw) continue
+    try {
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed) || !parsed.length) continue
+      const normalized = parsed.map(normalizeRoadbook)
+      if (!normalized.some((roadbook) => roadbook.id === qingganRoadbook.id)) {
+        normalized.unshift(qingganRoadbook)
+      }
+
+      if (raw !== candidates[0]) {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
+        } catch {
+          // The recovered in-memory data is still usable when storage is unavailable.
+        }
+      }
+      return normalized
+    } catch {
+      continue
+    }
+  }
+
+  return [qingganRoadbook, sampleRoadbook]
 }
 
 export function saveRoadbooks(roadbooks: Roadbook[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(roadbooks))
+  const next = JSON.stringify(roadbooks)
+  const current = localStorage.getItem(STORAGE_KEY)
+
+  if (current && current !== next) {
+    try {
+      const parsed = JSON.parse(current)
+      if (Array.isArray(parsed) && parsed.length) {
+        localStorage.setItem(BACKUP_STORAGE_KEY, current)
+      }
+    } catch {
+      // Keep the last valid backup when the current value is already damaged.
+    }
+  }
+
+  try {
+    localStorage.setItem(STORAGE_KEY, next)
+  } catch {
+    // A backup can consume the remaining localStorage quota. Current data wins.
+    try {
+      localStorage.removeItem(BACKUP_STORAGE_KEY)
+    } catch {
+      // Retry the primary write even if backup cleanup is unavailable.
+    }
+    localStorage.setItem(STORAGE_KEY, next)
+  }
 }
 
 export function createRoadbook(): Roadbook {

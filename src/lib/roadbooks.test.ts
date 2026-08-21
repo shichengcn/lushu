@@ -48,6 +48,31 @@ describe('roadbook data helpers', () => {
     expect(loadRoadbooks().find((item) => item.id === roadbook.id)).toEqual(roadbook)
   })
 
+  it('never replaces a locally edited built-in roadbook during a new build', () => {
+    const customized = structuredClone(qingganRoadbook)
+    customized.title = '我的青甘行程'
+    saveRoadbooks([customized])
+
+    expect(loadRoadbooks().find((item) => item.id === customized.id)?.title).toBe(
+      '我的青甘行程',
+    )
+  })
+
+  it('restores the previous local backup when primary data is damaged', () => {
+    const first = createRoadbook()
+    first.title = '可恢复版本'
+    saveRoadbooks([first])
+
+    const second = structuredClone(first)
+    second.title = '最新版本'
+    saveRoadbooks([second])
+    localStorage.setItem('tuji-roadbooks-v2', '{broken')
+
+    expect(loadRoadbooks().find((item) => item.id === first.id)?.title).toBe(
+      '可恢复版本',
+    )
+  })
+
   it('calculates totals and keeps a valid first stop when reversing', () => {
     expect(totalDistance(sampleRoadbook)).toBeCloseTo(47.6)
     expect(totalCost(sampleRoadbook)).toBe(878)
