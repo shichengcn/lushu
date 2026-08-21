@@ -6,6 +6,12 @@ export interface LocalDatabaseSnapshot {
   source: 'local' | 'export'
 }
 
+export interface LocalExportResult {
+  exportedAt: string
+  databaseSavedAt: string
+  roadbookCount: number
+}
+
 let localDatabaseEndpointAvailable = false
 
 export function isLocalWorkspace() {
@@ -23,7 +29,16 @@ export async function loadDatabaseSnapshot(): Promise<LocalDatabaseSnapshot | nu
   for (const candidate of candidates) {
     try {
       const response = await fetch(candidate.url, { cache: 'no-store' })
-      if (!response.ok) continue
+      if (!response.ok) {
+        if (
+          candidate.source === 'local' &&
+          response.status === 404 &&
+          response.headers.get('content-type')?.includes('application/json')
+        ) {
+          localDatabaseEndpointAvailable = true
+        }
+        continue
+      }
       const snapshot = await response.json()
       if (!Array.isArray(snapshot?.roadbooks) || !snapshot.roadbooks.length) continue
       if (candidate.source === 'local') localDatabaseEndpointAvailable = true
@@ -40,7 +55,7 @@ export async function loadDatabaseSnapshot(): Promise<LocalDatabaseSnapshot | nu
 }
 
 export async function saveLocalDatabase(roadbooks: Roadbook[]) {
-  if (!isLocalWorkspace() || !localDatabaseEndpointAvailable) return
+  if (!isLocalWorkspace() || !localDatabaseEndpointAvailable) return false
   const response = await fetch('/__tuji/local-db', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -50,4 +65,21 @@ export async function saveLocalDatabase(roadbooks: Roadbook[]) {
     }),
   })
   if (!response.ok) throw new Error('本地数据库写入失败')
+  return true
+}
+
+export function hasLocalDatabaseEndpoint() {
+  return localDatabaseEndpointAvailable
+}
+
+export async function exportLocalDist(): Promise<LocalExportResult> {
+  if (!isLocalWorkspace() || !localDatabaseEndpointAvailable) {
+    throw new Error('请通过 pnpm dev 或 pnpm preview 打开本地预览')
+  }
+  const response = await fetch('/__tuji/export-dist', { method: 'POST' })
+  const result = await response.json()
+  if (!response.ok) {
+    throw new Error(result?.error || 'dist 导出失败')
+  }
+  return result
 }

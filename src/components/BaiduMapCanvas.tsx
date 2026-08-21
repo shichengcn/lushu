@@ -187,6 +187,7 @@ export function BaiduMapCanvas({
   const routeCacheRef = useRef(new Map<string, BaiduRouteResult>())
   const measurePointsRef = useRef<any[]>([])
   const measureOverlaysRef = useRef<any[]>([])
+  const renderOverlaysRef = useRef<any[]>([])
   const [mapReady, setMapReady] = useState(false)
   const [mapError, setMapError] = useState('')
   const [routeActivity, setRouteActivity] = useState({ pending: 0, retries: 0 })
@@ -303,6 +304,8 @@ export function BaiduMapCanvas({
     if (!mapReady || !BMapGL || !map) return
     const generation = ++generationRef.current
     const requestController = new AbortController()
+    renderOverlaysRef.current.forEach((overlay) => map.removeOverlay?.(overlay))
+    renderOverlaysRef.current = []
     map.clearOverlays()
     measurePointsRef.current = []
     measureOverlaysRef.current = []
@@ -311,8 +314,13 @@ export function BaiduMapCanvas({
     const relevantGroups = routeGroupsForScope(roadbook, scope)
     const relevantGroupIds = new Set(relevantGroups.map((group) => group.id))
     const allGroups = displayDrivingGroups(roadbook, scope)
+    const addRenderOverlay = (overlay: any) => {
+      map.addOverlay(overlay)
+      renderOverlaysRef.current.push(overlay)
+    }
 
     markerEntries.forEach(({ day, dayIndex, stop, stopIndex, relevant }) => {
+      if (day.id !== activeDayId) return
       const [lng, lat] = gcj02ToBd09(stop.location)
       const point = new BMapGL.Point(lng, lat)
       const marker = new BMapGL.Marker(point)
@@ -340,7 +348,7 @@ export function BaiduMapCanvas({
           stopId: stop.id,
         })
       })
-      map.addOverlay(marker)
+      addRenderOverlay(marker)
       const numberLabel = new BMapGL.Label(String(stopIndex + 1), {
         position: point,
         offset: new BMapGL.Size(-14, -58),
@@ -367,7 +375,7 @@ export function BaiduMapCanvas({
           stopId: stop.id,
         })
       })
-      map.addOverlay(numberLabel)
+      addRenderOverlay(numberLabel)
       const selected = selectedStopId === stop.id
       const focused =
         (relevant || day.id === activeDayId) &&
@@ -409,7 +417,7 @@ export function BaiduMapCanvas({
           stopId: stop.id,
         })
       })
-      if (focused) map.addOverlay(label)
+      if (focused) addRenderOverlay(label)
     })
 
     const draw = async () => {
@@ -447,7 +455,10 @@ export function BaiduMapCanvas({
               }
             }
             if (!result.path.length || generationRef.current !== generation) return
-            const active = scope.mode === 'global' || relevantGroupIds.has(group.id)
+            const active =
+              scope.mode === 'global'
+                ? group.dayId === activeDayId
+                : relevantGroupIds.has(group.id)
             const color = DAY_COLORS[group.dayIndex % DAY_COLORS.length]
             const line = new BMapGL.Polyline(result.path, {
               strokeColor: color,
@@ -459,14 +470,14 @@ export function BaiduMapCanvas({
                 onScopeChange({ mode: 'day', dayId: group.dayId })
               }
             })
-            map.addOverlay(line)
+            addRenderOverlay(line)
             const labelPairs: Array<{
               stop: TripStop
               previous: TripStop
               text: string
               daySummary: boolean
             }> = []
-            if (scope.mode === 'global') {
+            if (scope.mode === 'global' && group.dayId === activeDayId) {
               labelPairs.push({
                 stop: group.stops.at(-1)!,
                 previous: group.stops[0],
@@ -523,7 +534,7 @@ export function BaiduMapCanvas({
                   fromStopId: previous.id,
                 })
               })
-              map.addOverlay(label)
+              addRenderOverlay(label)
             })
             if (group.stops.length === 2) {
               resolved.push({

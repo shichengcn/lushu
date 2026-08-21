@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { estimateLeg } from '@/lib/amap'
 import {
@@ -21,7 +21,12 @@ import {
   saveRoadbooks,
   storedRoadbooksSavedAt,
 } from '@/lib/roadbooks'
-import { loadDatabaseSnapshot, saveLocalDatabase } from '@/lib/local-database'
+import {
+  exportLocalDist as runLocalDistExport,
+  hasLocalDatabaseEndpoint,
+  loadDatabaseSnapshot,
+  saveLocalDatabase,
+} from '@/lib/local-database'
 import {
   compressPlacePhoto,
   ensurePlaceLibraryEntry,
@@ -33,6 +38,10 @@ import type { ResolvedLeg, Roadbook, TripDay, TripStop } from '@/types'
 const INITIAL_SHARED_ROADBOOK = parseSharedRoadbook()
 const INITIAL_ROADBOOKS = loadRoadbooks()
 const INITIAL_ACTIVE_ROADBOOK = INITIAL_SHARED_ROADBOOK || INITIAL_ROADBOOKS[0]
+const INITIAL_ACTIVE_DAY_ID =
+  INITIAL_ACTIVE_ROADBOOK.days[
+    INITIAL_ACTIVE_ROADBOOK.id === 'roadbook-qinggan-reverse' ? 1 : 0
+  ]?.id || INITIAL_ACTIVE_ROADBOOK.days[0].id
 
 function relinkStops(stops: TripStop[]) {
   let previousVisible: TripStop | null = null
@@ -74,11 +83,9 @@ export function useRoadbookController() {
   const [activeRoadbookId, setActiveRoadbookId] = useState(
     () => INITIAL_SHARED_ROADBOOK?.id || INITIAL_ROADBOOKS[0].id,
   )
-  const [activeDayId, setActiveDayId] = useState(
-    () =>
-      INITIAL_ACTIVE_ROADBOOK.days[
-        INITIAL_ACTIVE_ROADBOOK.id === 'roadbook-qinggan-reverse' ? 1 : 0
-      ]?.id || INITIAL_ACTIVE_ROADBOOK.days[0].id,
+  const [activeDayId, setActiveDayId] = useState(() => INITIAL_ACTIVE_DAY_ID)
+  const [expandedDayId, setExpandedDayId] = useState<string | null>(
+    () => INITIAL_ACTIVE_DAY_ID,
   )
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null)
   const [mode, setMode] = useState<'edit' | 'view'>(INITIAL_SHARED_ROADBOOK ? 'view' : 'edit')
@@ -97,6 +104,12 @@ export function useRoadbookController() {
   const [previousStop, setPreviousStop] = useState<TripStop | null>(null)
   const [tripDraft, setTripDraft] = useState<Roadbook | null>(null)
   const [databaseReady, setDatabaseReady] = useState(false)
+  const [databaseStatus, setDatabaseStatus] = useState<
+    'loading' | 'saving' | 'saved' | 'browser' | 'error'
+  >('loading')
+  const [databaseSavedAt, setDatabaseSavedAt] = useState('')
+  const [exportingDist, setExportingDist] = useState(false)
+  const [canExportDist, setCanExportDist] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
   const databaseErrorShownRef = useRef(false)
 
@@ -122,7 +135,11 @@ export function useRoadbookController() {
         setRoadbooks(restored)
         setActiveRoadbookId(restored[0].id)
         setActiveDayId(restored[0].days[0].id)
+        setExpandedDayId(restored[0].days[0].id)
       }
+      setCanExportDist(hasLocalDatabaseEndpoint())
+      setDatabaseSavedAt(snapshot?.source === 'local' ? snapshot.savedAt : '')
+      setDatabaseStatus(snapshot?.source === 'local' ? 'saved' : 'browser')
       setDatabaseReady(true)
     })
     return () => {
@@ -138,12 +155,24 @@ export function useRoadbookController() {
     if (!persisted.length) return
     saveRoadbooks(persisted)
     const timeout = window.setTimeout(() => {
-      void saveLocalDatabase(persisted).catch(() => {
-        if (!databaseErrorShownRef.current) {
-          databaseErrorShownRef.current = true
-          toast.error('本地数据库写入失败，浏览器副本仍已保存')
-        }
-      })
+      setDatabaseStatus('saving')
+      void saveLocalDatabase(persisted)
+        .then((saved) => {
+          if (saved) {
+            setDatabaseSavedAt(new Date().toISOString())
+            setDatabaseStatus('saved')
+            setCanExportDist(true)
+          } else {
+            setDatabaseStatus('browser')
+          }
+        })
+        .catch(() => {
+          setDatabaseStatus('error')
+          if (!databaseErrorShownRef.current) {
+            databaseErrorShownRef.current = true
+            toast.error('本地数据库写入失败，浏览器副本仍已保存')
+          }
+        })
     }, 250)
     return () => window.clearTimeout(timeout)
   }, [databaseReady, isSharedPreview, roadbooks, sharedPreviewId])
@@ -231,6 +260,7 @@ export function useRoadbookController() {
         candidate.stops.some((stop) => stop.id === stopId),
       )
       if (day) setActiveDayId(day.id)
+      if (day) setExpandedDayId(day.id)
       setSelectedStopId(stopId)
     },
     [activeRoadbook.days],
@@ -269,6 +299,7 @@ export function useRoadbookController() {
       }
     })
     setActiveDayId(targetDayId)
+    setExpandedDayId(targetDayId)
     setSelectedStopId(stop.id)
     toast.success(editingStop ? '节点已更新' : '节点已添加')
   }
@@ -368,6 +399,7 @@ export function useRoadbookController() {
       }
     })
     setActiveDayId(targetDayId)
+    setExpandedDayId(targetDayId)
     toast.success('节点已移动到新的日期')
   }
 
@@ -414,6 +446,8 @@ export function useRoadbookController() {
       return redateRoadbook(roadbook, days)
     })
     setActiveDayId(day.id)
+    setExpandedDayId(day.id)
+    return day
   }
 
   const deleteDay = (dayId: string) => {
@@ -421,9 +455,12 @@ export function useRoadbookController() {
     const deletedIndex = activeRoadbook.days.findIndex((day) => day.id === dayId)
     const remaining = activeRoadbook.days.filter((day) => day.id !== dayId)
     updateRoadbook((roadbook) => redateRoadbook(roadbook, remaining))
-    setActiveDayId(remaining[Math.max(0, deletedIndex - 1)].id)
+    const nextDayId = remaining[Math.max(0, deletedIndex - 1)].id
+    setActiveDayId(nextDayId)
+    setExpandedDayId(nextDayId)
     setSelectedStopId(null)
     toast.success('当天行程已删除，后续日期已自动前移')
+    return nextDayId
   }
 
   const reverseActiveDay = (dayId: string) => {
@@ -439,11 +476,13 @@ export function useRoadbookController() {
     setRoadbooks((current) => [roadbook, ...current])
     setActiveRoadbookId(roadbook.id)
     setActiveDayId(roadbook.days[0].id)
+    setExpandedDayId(roadbook.days[0].id)
     setMode('edit')
     setMainView('workspace')
     setIsSharedPreview(false)
     setSharedPreviewId(null)
     window.history.replaceState(null, '', window.location.pathname)
+    return roadbook
   }
 
   const duplicateRoadbook = (id: string) => {
@@ -473,6 +512,7 @@ export function useRoadbookController() {
     const selected = roadbooks.find((roadbook) => roadbook.id === id)
     setActiveRoadbookId(id)
     setActiveDayId(selected?.days[0]?.id || '')
+    setExpandedDayId(selected?.days[0]?.id || null)
     setSelectedStopId(null)
     setIsSharedPreview(id === sharedPreviewId)
   }
@@ -553,6 +593,7 @@ export function useRoadbookController() {
       setRoadbooks((current) => [imported, ...current])
       setActiveRoadbookId(imported.id)
       setActiveDayId(imported.days[0].id)
+      setExpandedDayId(imported.days[0].id)
       setMode('edit')
       setMainView('workspace')
       setIsSharedPreview(false)
@@ -565,12 +606,40 @@ export function useRoadbookController() {
     }
   }
 
-  const saveStatus = useMemo(() => {
-    const time = new Date(activeRoadbook.updatedAt)
-    return Number.isNaN(time.getTime())
-      ? '已保存到本地'
-      : `${time.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 已保存`
-  }, [activeRoadbook.updatedAt])
+  const exportDist = async () => {
+    if (exportingDist) return
+    setExportingDist(true)
+    try {
+      const persisted = isSharedPreview
+        ? roadbooks.filter((roadbook) => roadbook.id !== sharedPreviewId)
+        : roadbooks
+      saveRoadbooks(persisted)
+      await saveLocalDatabase(persisted)
+      setDatabaseSavedAt(new Date().toISOString())
+      setDatabaseStatus('saved')
+      const result = await runLocalDistExport()
+      toast.success(`dist 已导出：${result.roadbookCount} 本路书`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'dist 导出失败')
+    } finally {
+      setExportingDist(false)
+    }
+  }
+
+  const savedTime = new Date(databaseSavedAt)
+  const saveStatus =
+    databaseStatus === 'loading'
+      ? '正在读取本机数据库'
+      : databaseStatus === 'saving'
+        ? '正在写入本机数据库'
+        : databaseStatus === 'saved' && !Number.isNaN(savedTime.getTime())
+          ? `${savedTime.toLocaleTimeString('zh-CN', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })} 本机数据库已保存`
+          : databaseStatus === 'error'
+            ? '本机数据库写入失败'
+            : '已保存到当前浏览器'
 
   return {
     roadbooks,
@@ -578,6 +647,8 @@ export function useRoadbookController() {
     activeDay,
     activeDayId,
     setActiveDayId,
+    expandedDayId,
+    setExpandedDayId,
     selectedStopId,
     setSelectedStopId,
     mode,
@@ -603,6 +674,9 @@ export function useRoadbookController() {
     importInputRef,
     readOnly,
     saveStatus,
+    canExportDist,
+    exportingDist,
+    exportDist,
     handleRoutesResolved,
     handleSelectStop,
     openAddStop,

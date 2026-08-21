@@ -7,11 +7,13 @@ import {
   Eye,
   FileUp,
   Library,
+  LoaderCircle,
   Map as MapIcon,
   MoreHorizontal,
   Navigation,
   Pencil,
   Plus,
+  PackageCheck,
   Save,
   Share2,
   Trash2,
@@ -73,6 +75,8 @@ function App() {
     activeRoadbook,
     activeDay,
     setActiveDayId,
+    expandedDayId,
+    setExpandedDayId,
     selectedStopId,
     setSelectedStopId,
     mode,
@@ -98,8 +102,10 @@ function App() {
     importInputRef,
     readOnly,
     saveStatus,
+    canExportDist,
+    exportingDist,
+    exportDist,
   } = controller
-
   useEffect(() => {
     localStorage.setItem('tuji-map-provider', mapProvider)
   }, [mapProvider])
@@ -107,6 +113,36 @@ function App() {
   const switchMobilePane = (pane: 'plan' | 'map' | 'analytics') => {
     setMobilePane(pane)
     setMainView(pane === 'analytics' ? 'analytics' : 'workspace')
+  }
+
+  const toggleDay = (dayId: string) => {
+    if (expandedDayId === dayId) {
+      setExpandedDayId(null)
+      return
+    }
+    setExpandedDayId(dayId)
+    setActiveDayId(dayId)
+    setSelectedStopId(null)
+    setMapScope({ mode: 'day', dayId })
+  }
+
+  const selectStop = (stopId: string) => {
+    controller.handleSelectStop(stopId)
+    const day = activeRoadbook.days.find((item) =>
+      item.stops.some((stop) => stop.id === stopId),
+    )
+    if (day) {
+      setExpandedDayId(day.id)
+      setMapScope({ mode: 'day', dayId: day.id })
+    }
+  }
+
+  const changeMapScope = (scope: MapScope) => {
+    setMapScope(scope)
+    if (scope.mode !== 'global') {
+      setActiveDayId(scope.dayId)
+      setExpandedDayId(scope.dayId)
+    }
   }
 
   return (
@@ -173,6 +209,25 @@ function App() {
               </button>
             </div>
           )}
+          {canExportDist ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={exportingDist}
+              onClick={() => void exportDist()}
+              title="构建并将本机数据库固化到 dist"
+            >
+              {exportingDist ? (
+                <LoaderCircle className="spin" size={16} />
+              ) : (
+                <PackageCheck size={16} />
+              )}
+              <span className="desktop-label">
+                {exportingDist ? '正在导出' : '导出 dist'}
+              </span>
+            </Button>
+          ) : null}
           <Button type="button" variant="ghost" size="sm" onClick={() => setLibraryOpen(true)}>
             <Library size={16} />
             <span className="desktop-label">路书库</span>
@@ -255,28 +310,33 @@ function App() {
           <ItineraryPanel
             roadbook={activeRoadbook}
             activeDayId={activeDay.id}
+            expandedDayId={expandedDayId}
             selectedStopId={selectedStopId}
             readOnly={readOnly}
-            onSelectDay={(dayId) => {
-              setActiveDayId(dayId)
-              setSelectedStopId(null)
-              setMapScope({ mode: 'day', dayId })
-            }}
-            onSelectStop={(stopId) => {
-              controller.handleSelectStop(stopId)
-              const day = activeRoadbook.days.find((item) =>
-                item.stops.some((stop) => stop.id === stopId),
-              )
-              if (day) setMapScope({ mode: 'day', dayId: day.id })
-            }}
+            onToggleDay={toggleDay}
+            onSelectStop={selectStop}
             onEditTrip={controller.openTripSettings}
-            onAddDay={controller.addDay}
-            onDeleteDay={controller.deleteDay}
+            onAddDay={() => {
+              const day = controller.addDay()
+              setExpandedDayId(day.id)
+              setMapScope({ mode: 'day', dayId: day.id })
+            }}
+            onDeleteDay={(dayId) => {
+              const nextDayId = controller.deleteDay(dayId)
+              if (nextDayId) {
+                setExpandedDayId(nextDayId)
+                setMapScope({ mode: 'day', dayId: nextDayId })
+              }
+            }}
             onReverseDay={controller.reverseActiveDay}
             onAddStop={controller.openAddStop}
             onEditStop={controller.openEditStop}
             onMoveStop={controller.moveStop}
-            onMoveStopToDay={controller.moveStopToDay}
+            onMoveStopToDay={(sourceDayId, stopId, targetDayId) => {
+              controller.moveStopToDay(sourceDayId, stopId, targetDayId)
+              setExpandedDayId(targetDayId)
+              setMapScope({ mode: 'day', dayId: targetDayId })
+            }}
             onToggleHidden={controller.toggleHidden}
             onDeleteStop={controller.deleteStop}
           />
@@ -287,14 +347,8 @@ function App() {
             provider={mapProvider}
             scope={mapScope}
             onProviderChange={setMapProvider}
-            onScopeChange={setMapScope}
-            onSelectStop={(stopId) => {
-              controller.handleSelectStop(stopId)
-              const day = activeRoadbook.days.find((item) =>
-                item.stops.some((stop) => stop.id === stopId),
-              )
-              if (day) setMapScope({ mode: 'day', dayId: day.id })
-            }}
+            onScopeChange={changeMapScope}
+            onSelectStop={selectStop}
             onEditStop={controller.openEditStop}
             onRoutesResolved={controller.handleRoutesResolved}
             onAddPlacePhoto={controller.addPlacePhoto}
@@ -324,11 +378,14 @@ function App() {
         activeRoadbookId={activeRoadbook.id}
         onOpenChange={setLibraryOpen}
         onSelect={(id) => {
+          const selected = roadbooks.find((roadbook) => roadbook.id === id)
           controller.selectRoadbook(id)
+          setExpandedDayId(selected?.days[0]?.id || null)
           setMapScope({ mode: 'global' })
         }}
         onCreate={() => {
-          controller.createNewRoadbook()
+          const created = controller.createNewRoadbook()
+          setExpandedDayId(created.days[0].id)
           setMapScope({ mode: 'global' })
         }}
         onDuplicate={controller.duplicateRoadbook}

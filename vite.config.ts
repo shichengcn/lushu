@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,9 +7,57 @@ import { defineConfig, type Plugin, type PreviewServer, type ViteDevServer } fro
 
 const workspaceRoot = fileURLToPath(new URL(".", import.meta.url));
 const localDatabasePath = resolve(workspaceRoot, ".local-data/roadbooks.json");
+let exportPromise: Promise<string> | null = null;
+
+function runLocalExport() {
+  if (exportPromise) return exportPromise;
+  exportPromise = new Promise<string>((resolveExport, rejectExport) => {
+    const child = spawn(process.execPath, ["scripts/export-local.mjs"], {
+      cwd: workspaceRoot,
+      env: process.env,
+    });
+    let output = "";
+    let errorOutput = "";
+    child.stdout.on("data", (chunk) => {
+      output += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      errorOutput += String(chunk);
+    });
+    child.on("error", rejectExport);
+    child.on("close", (code) => {
+      if (code === 0) resolveExport(output);
+      else rejectExport(new Error(errorOutput || output || `export exited ${code}`));
+    });
+  }).finally(() => {
+    exportPromise = null;
+  });
+  return exportPromise;
+}
 
 function localDatabasePlugin(): Plugin {
   const attach = (server: ViteDevServer | PreviewServer) => {
+    server.middlewares.use("/__tuji/export-dist", async (request, response) => {
+      response.setHeader("content-type", "application/json; charset=utf-8");
+      response.setHeader("cache-control", "no-store");
+      if (request.method !== "POST") {
+        response.statusCode = 405;
+        response.end(JSON.stringify({ error: "method_not_allowed" }));
+        return;
+      }
+      try {
+        await runLocalExport();
+        response.end(await readFile(resolve(workspaceRoot, "dist/data/export-info.json"), "utf8"));
+      } catch (error) {
+        response.statusCode = 500;
+        response.end(
+          JSON.stringify({
+            error: error instanceof Error ? error.message : "dist_export_failed",
+          }),
+        );
+      }
+    });
+
     server.middlewares.use("/__tuji/local-db", async (request, response) => {
       response.setHeader("content-type", "application/json; charset=utf-8");
       response.setHeader("cache-control", "no-store");

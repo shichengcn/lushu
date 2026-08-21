@@ -34,9 +34,10 @@ import type { PlaceType, Roadbook, TransportMode, TripStop } from '@/types'
 interface ItineraryPanelProps {
   roadbook: Roadbook
   activeDayId: string
+  expandedDayId: string | null
   selectedStopId: string | null
   readOnly: boolean
-  onSelectDay: (dayId: string) => void
+  onToggleDay: (dayId: string) => void
   onSelectStop: (stopId: string) => void
   onEditTrip: () => void
   onAddDay: () => void
@@ -108,9 +109,10 @@ function previousVisibleStop(stops: TripStop[], currentIndex: number) {
 export function ItineraryPanel({
   roadbook,
   activeDayId,
+  expandedDayId,
   selectedStopId,
   readOnly,
-  onSelectDay,
+  onToggleDay,
   onSelectStop,
   onEditTrip,
   onAddDay,
@@ -157,7 +159,11 @@ export function ItineraryPanel({
       <div className="continuous-itinerary" role="tablist" aria-label="按天行程">
         {roadbook.days.map((day, dayIndex) => (
           <section
-            className={`day-section${day.id === activeDayId ? ' is-active is-expanded' : ''}`}
+            className={[
+              'day-section',
+              day.id === activeDayId ? 'is-active' : '',
+              day.id === expandedDayId ? 'is-expanded' : '',
+            ].filter(Boolean).join(' ')}
             key={day.id}
             onDragOver={(event) => {
               if (!readOnly) event.preventDefault()
@@ -180,8 +186,9 @@ export function ItineraryPanel({
                 type="button"
                 role="tab"
                 aria-selected={day.id === activeDayId}
+                aria-expanded={day.id === expandedDayId}
                 className="day-heading"
-                onClick={() => onSelectDay(day.id)}
+                onClick={() => onToggleDay(day.id)}
               >
                 <b className="day-number-large">{dayIndex + 1}</b>
                 <span className="day-heading-copy">
@@ -221,8 +228,13 @@ export function ItineraryPanel({
               ) : null}
             </div>
 
-            {day.id === activeDayId ? <div className="day-collapsible-content">
-              <div className="day-stop-list">
+            <div
+              className="day-collapsible-region"
+              aria-hidden={day.id !== expandedDayId}
+              inert={day.id !== expandedDayId}
+            >
+              <div className="day-collapsible-content">
+                <div className="day-stop-list">
               {!day.stops.length ? (
                 <div className="empty-day compact">
                   <MapPin size={23} />
@@ -412,15 +424,16 @@ export function ItineraryPanel({
                   </div>
                 )
               })}
-              </div>
+                </div>
 
-              {!readOnly ? (
-                <button type="button" className="add-stop-button" onClick={() => onAddStop(day.id)}>
-                  <Plus size={17} />
-                  添加到第 {dayIndex + 1} 天
-                </button>
-              ) : null}
-            </div> : null}
+                {!readOnly ? (
+                  <button type="button" className="add-stop-button" onClick={() => onAddStop(day.id)}>
+                    <Plus size={17} />
+                    添加到第 {dayIndex + 1} 天
+                  </button>
+                ) : null}
+              </div>
+            </div>
           </section>
         ))}
         {!readOnly ? (

@@ -265,11 +265,14 @@ function searchRoute(
 
 function FallbackMap({
   roadbook,
+  activeDayId,
   selectedStopId,
   onSelectStop,
   scope,
-}: Pick<AmapCanvasProps, 'roadbook' | 'selectedStopId' | 'onSelectStop' | 'scope'>) {
-  const allStops = markerEntriesForScope(roadbook, scope)
+}: Pick<AmapCanvasProps, 'roadbook' | 'activeDayId' | 'selectedStopId' | 'onSelectStop' | 'scope'>) {
+  const allStops = markerEntriesForScope(roadbook, scope).filter(
+    ({ day }) => day.id === activeDayId,
+  )
   const bounds = useMemo(() => {
     if (!allStops.length) return { minLng: 90, maxLng: 122, minLat: 27, maxLat: 42 }
     const lngs = allStops.map(({ stop }) => stop.location[0])
@@ -444,6 +447,7 @@ export function AmapCanvas({
     )
 
     roadbook.days.forEach((day, dayIndex) => {
+      if (day.id !== activeDayId) return
       const stops = visibleStops(day)
 
       stops.forEach((stop, stopIndex) => {
@@ -491,6 +495,7 @@ export function AmapCanvas({
         }
 
         if (
+          day.id === activeDayId &&
           relevantStopIds.has(stop.id) &&
           visibility.labels &&
           focusMode !== 'cost' &&
@@ -529,7 +534,10 @@ export function AmapCanvas({
           if (!group) break
           const { dayId, dayIndex } = group
           const color = DAY_COLORS[dayIndex % DAY_COLORS.length]
-          const active = scope.mode === 'global' || relevantGroupIds.has(group.id)
+          const active =
+            scope.mode === 'global'
+              ? dayId === activeDayId
+              : relevantGroupIds.has(group.id)
           const cacheKey = group.stops.map((stop) => stop.location.join(',')).join('|')
           let route = routeCacheRef.current.get(cacheKey)
           if (route === undefined) {
@@ -593,8 +601,12 @@ export function AmapCanvas({
             })
           }
 
-          if (visibility.distances && (active || focusMode === 'driving')) {
+          if (visibility.distances) {
             if (scope.mode === 'global') {
+              if (dayId !== activeDayId) {
+                await new Promise((resolve) => window.setTimeout(resolve, 180))
+                continue
+              }
               const middle = path[Math.floor(path.length / 2)]
               const content = document.createElement('button')
               content.type = 'button'
@@ -612,7 +624,7 @@ export function AmapCanvas({
                 zIndex: 120,
               })
               distanceLabel.setMap(map)
-            } else {
+            } else if (active || focusMode === 'driving') {
               group.stops.slice(1).forEach((stop, index) => {
                 const previous = group.stops[index]
                 const midpoint: [number, number] = [
@@ -764,6 +776,7 @@ export function AmapCanvas({
       {mapError ? (
         <FallbackMap
           roadbook={roadbook}
+          activeDayId={activeDayId}
           selectedStopId={selectedStopId}
           onSelectStop={onSelectStop}
           scope={scope}
