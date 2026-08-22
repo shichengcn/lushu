@@ -87,7 +87,11 @@ function ensurePagesProject() {
     output('pnpm', ['exec', 'wrangler', 'pages', 'project', 'list', '--json']),
   )
   const projects = Array.isArray(list) ? list : list.result || []
-  if (!projects.some((project) => project.name === projectName)) {
+  if (
+    !projects.some(
+      (project) => project.name === projectName || project['Project Name'] === projectName,
+    )
+  ) {
     command('pnpm', [
       'exec',
       'wrangler',
