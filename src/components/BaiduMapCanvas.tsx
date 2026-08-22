@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BedDouble,
   Car,
+  ChevronDown,
   CircleDollarSign,
   Eye,
   Layers3,
@@ -38,6 +39,18 @@ import {
   type RouteGroup,
 } from '@/lib/map-routes'
 import {
+  applyMarkerOffsets,
+  calculateMarkerOffsets,
+  createKnowledgeMarkerElement,
+  createStopMarkerElement,
+  DEFAULT_MAP_VISIBILITY,
+  focusAllowsStop,
+  focusShowsDistances,
+  focusShowsKnowledge,
+  visibilityAllowsStop,
+  visibilityForFocus,
+} from '@/lib/map-markers'
+import {
   DAY_COLORS,
   legCost,
   stopCost,
@@ -55,6 +68,7 @@ import type {
   MapBaseLayer,
   MapFocusMode,
   MapScope,
+  MapVisibility,
   ResolvedLeg,
   Roadbook,
   TripStop,
@@ -94,13 +108,6 @@ const focusModes: Array<{ value: MapFocusMode; label: string; icon: typeof MapIc
   { value: 'driving', label: '驾车', icon: Car },
   { value: 'hotel', label: '酒店', icon: BedDouble },
 ]
-
-function stopLabel(stop: TripStop, index: number, focusMode: MapFocusMode) {
-  if (focusMode === 'cost') {
-    return `${index + 1}  ${stop.name}  ¥${stopCost(stop).toLocaleString('zh-CN')}`
-  }
-  return `${index + 1}  ${stop.name}`
-}
 
 function requestBaiduRoute(BMapGL: any, map: any, group: RouteGroup) {
   return new Promise<BaiduRouteResult>((resolve, reject) => {
@@ -180,6 +187,33 @@ function fitPoints(BMapGL: any, map: any, stops: TripStop[]) {
   if (points.length) map.setViewport(points, { margins: [90, 90, 90, 90] })
 }
 
+function createBaiduHtmlOverlay(
+  BMapGL: any,
+  point: any,
+  element: HTMLElement,
+  anchor: { x: number; y: number },
+  zIndex: number,
+) {
+  const overlay = Object.create(BMapGL.Overlay.prototype)
+  overlay.point = point
+  overlay.element = element
+  overlay.map = null
+  overlay.initialize = (map: any) => {
+    overlay.map = map
+    element.classList.add('baidu-html-marker')
+    element.style.zIndex = String(zIndex)
+    map.getPanes().markerPane.appendChild(element)
+    return element
+  }
+  overlay.draw = () => {
+    const pixel = overlay.map.pointToOverlayPixel(point)
+    element.style.left = `${pixel.x - anchor.x}px`
+    element.style.top = `${pixel.y - anchor.y}px`
+  }
+  overlay.getPosition = () => point
+  return overlay
+}
+
 export function BaiduMapCanvas({
   roadbook,
   activeDayId,
@@ -207,8 +241,8 @@ export function BaiduMapCanvas({
   const [routeActivity, setRouteActivity] = useState({ pending: 0, retries: 0 })
   const [focusMode, setFocusMode] = useState<MapFocusMode>('overview')
   const [baseLayer, setBaseLayer] = useState<MapBaseLayer>('standard')
-  const [traffic, setTraffic] = useState(false)
-  const [showKnowledge, setShowKnowledge] = useState(true)
+  const [visibility, setVisibility] = useState<MapVisibility>(DEFAULT_MAP_VISIBILITY)
+  const [layerMenuOpen, setLayerMenuOpen] = useState(false)
   const [measuring, setMeasuring] = useState(false)
   const [measuredDistance, setMeasuredDistance] = useState(0)
   const [measurePointCount, setMeasurePointCount] = useState(0)
@@ -282,9 +316,9 @@ export function BaiduMapCanvas({
     map.setMapType(
       baseLayer === 'satellite' ? BMapGL.BMAP_SATELLITE_MAP : BMapGL.BMAP_NORMAL_MAP,
     )
-    if (traffic) map.setTrafficOn?.()
+    if (visibility.traffic) map.setTrafficOn?.()
     else map.setTrafficOff?.()
-  }, [baseLayer, mapReady, traffic])
+  }, [baseLayer, mapReady, visibility.traffic])
 
   useEffect(() => {
     const BMapGL = baiduRef.current
@@ -393,33 +427,39 @@ export function BaiduMapCanvas({
       map.addOverlay(overlay)
       renderOverlaysRef.current.push(overlay)
     }
+    const markerVisuals: Array<{
+      id: string
+      point: any
+      element: HTMLElement
+      priority: number
+    }> = []
 
     markerEntries.forEach(({ day, dayIndex, stop, stopIndex, relevant }) => {
       if (scope.mode !== 'global' && day.id !== activeDayId) return
+      const visible =
+        visibilityAllowsStop(visibility, stop) &&
+        focusAllowsStop(focusMode, stop) &&
+        (focusMode !== 'cost' || visibility.costs)
+      if (!visible) return
       const [lng, lat] = gcj02ToBd09(stop.location)
       const point = new BMapGL.Point(lng, lat)
-      const marker = new BMapGL.Marker(point)
-      const photo = placeLibraryEntry(roadbook, stop).photos[0]
-      if (photo) {
-        const preview = new Image()
-        preview.onload = () => {
-          if (
-            photo.source === 'generated' &&
-            preview.naturalWidth === preview.naturalHeight
-          ) {
-            return
-          }
-          marker.setIcon(
-            new BMapGL.Icon(photo.url, new BMapGL.Size(46, 46), {
-              anchor: new BMapGL.Size(23, 46),
-              imageSize: new BMapGL.Size(46, 46),
-            }),
-          )
-        }
-        preview.src = photo.url
-      }
-      marker.setTitle(stop.name)
-      marker.addEventListener('click', () => {
+      const emphasizeMarker =
+        scope.mode === 'global' || relevant || day.id === activeDayId
+      const content = createStopMarkerElement({
+        dayIndex,
+        stopIndex,
+        stop,
+        photos: placeLibraryEntry(roadbook, stop).photos,
+        selected: selectedStopId === stop.id,
+        dimmed: !emphasizeMarker,
+        showNumber: scope.mode !== 'global',
+        showLabel:
+          scope.mode !== 'global' &&
+          emphasizeMarker &&
+          visibility.labels,
+        focusMode,
+      })
+      content.addEventListener('click', () => {
         onSelectStop(stop.id)
         setDismissedStopId(null)
         setSelectedElement({
@@ -428,77 +468,23 @@ export function BaiduMapCanvas({
           stopId: stop.id,
         })
       })
+      const marker = createBaiduHtmlOverlay(
+        BMapGL,
+        point,
+        content,
+        { x: 21, y: scope.mode === 'global' ? 42 : 52 },
+        selectedStopId === stop.id ? 160 : emphasizeMarker ? 130 : 110,
+      )
       addRenderOverlay(marker)
-      if (scope.mode !== 'global') {
-        const numberLabel = new BMapGL.Label(String(stopIndex + 1), {
-          position: point,
-          offset: new BMapGL.Size(-14, -58),
-        })
-        numberLabel.setStyle({
-          width: '28px',
-          height: '28px',
-          border: '3px solid #fff',
-          borderRadius: '50%',
-          background: DAY_COLORS[dayIndex % DAY_COLORS.length],
-          color: '#fff',
-          fontSize: '14px',
-          fontWeight: '800',
-          lineHeight: '22px',
-          textAlign: 'center',
-          boxShadow: '0 3px 8px rgba(24,39,53,.28)',
-        })
-        numberLabel.addEventListener('click', () => {
-          onSelectStop(stop.id)
-          setDismissedStopId(null)
-          setSelectedElement({
-            kind: 'stop',
-            dayId: roadbook.days[dayIndex].id,
-            stopId: stop.id,
-          })
-        })
-        addRenderOverlay(numberLabel)
-      }
-      const selected = selectedStopId === stop.id
-      const focused =
-        (scope.mode === 'global' || relevant || day.id === activeDayId) &&
-        (focusMode === 'overview' ||
-          focusMode === 'cost' ||
-          focusMode === 'driving' ||
-          (focusMode === 'scenic' && stop.type === 'scenic') ||
-          (focusMode === 'hotel' && stop.type === 'hotel'))
-      const label = new BMapGL.Label(stopLabel(stop, stopIndex, focusMode), {
-        position: point,
-        offset: new BMapGL.Size(13, -35),
+      markerVisuals.push({
+        id: `stop:${stop.id}`,
+        point,
+        element: content,
+        priority: selectedStopId === stop.id ? 1000 : 500,
       })
-      label.setStyle({
-        border: `${selected ? 2 : 1}px solid ${
-          focused ? DAY_COLORS[dayIndex % DAY_COLORS.length] : '#9da8b1'
-        }`,
-        borderRadius: '4px',
-        background: '#fff',
-        color: '#26313f',
-        fontSize: '11px',
-        padding: '4px 7px',
-        opacity: focused ? '1' : '0.7',
-        boxShadow: selected
-          ? '0 0 0 3px rgba(16,167,162,.2)'
-          : focused
-            ? '0 3px 10px rgba(20,35,48,.18)'
-            : 'none',
-      })
-      label.addEventListener('click', () => {
-        onSelectStop(stop.id)
-        setDismissedStopId(null)
-        setSelectedElement({
-          kind: 'stop',
-          dayId: roadbook.days[dayIndex].id,
-          stopId: stop.id,
-        })
-      })
-      if (focused && scope.mode !== 'global') addRenderOverlay(label)
     })
 
-    if (showKnowledge && (focusMode === 'overview' || focusMode === 'scenic')) {
+    if (visibility.knowledge && focusShowsKnowledge(focusMode)) {
       const scopeDayIndex =
         scope.mode === 'global'
           ? undefined
@@ -507,41 +493,61 @@ export function BaiduMapCanvas({
         if (isKnowledgePlaceSelected(place, roadbook)) return
         const [lng, lat] = gcj02ToBd09(place.location)
         const point = new BMapGL.Point(lng, lat)
-        const marker = new BMapGL.Marker(point)
-        marker.setTitle(`规划景点：${place.name}`)
-        marker.setOpacity?.(place.isNiche ? 0.48 : 0.62)
         const virtualStop = knowledgePlaceToStop(
           place,
           roadbook.travelers.map((traveler) => traveler.id),
         )
-        const photo = placeLibraryEntry(roadbook, virtualStop).photos[0]
-        if (photo) {
-          const preview = new Image()
-          preview.onload = () => {
-            if (
-              photo.source === 'generated' &&
-              preview.naturalWidth === preview.naturalHeight
-            ) {
-              return
-            }
-            marker.setIcon(
-              new BMapGL.Icon(photo.url, new BMapGL.Size(34, 34), {
-                anchor: new BMapGL.Size(17, 34),
-                imageSize: new BMapGL.Size(34, 34),
-              }),
-            )
-          }
-          preview.src = photo.url
-        }
-        marker.addEventListener('click', () => {
+        const content = createKnowledgeMarkerElement(
+          place,
+          placeLibraryEntry(roadbook, virtualStop).photos,
+        )
+        content.addEventListener('click', () => {
           setSelectedElement({ kind: 'knowledge', placeId: place.id })
           setDismissedStopId(null)
         })
+        const marker = createBaiduHtmlOverlay(
+          BMapGL,
+          point,
+          content,
+          { x: 17, y: 34 },
+          place.isNiche ? 62 : 68,
+        )
         addRenderOverlay(marker)
+        markerVisuals.push({
+          id: `knowledge:${place.id}`,
+          point,
+          element: content,
+          priority: place.isNiche ? 50 : 100,
+        })
       })
     }
 
+    let collisionTimer = 0
+    const updateMarkerCollisions = () => {
+      if (generationRef.current !== generation || !map.pointToOverlayPixel) return
+      const projected = markerVisuals.flatMap((item) => {
+        const pixel = map.pointToOverlayPixel(item.point)
+        const x = Number(pixel?.x)
+        const y = Number(pixel?.y)
+        return Number.isFinite(x) && Number.isFinite(y)
+          ? [{ id: item.id, x, y, priority: item.priority }]
+          : []
+      })
+      applyMarkerOffsets(markerVisuals, calculateMarkerOffsets(projected))
+    }
+    const scheduleMarkerCollisions = () => {
+      window.clearTimeout(collisionTimer)
+      collisionTimer = window.setTimeout(updateMarkerCollisions, 80)
+    }
+    map.addEventListener('zoomend', scheduleMarkerCollisions)
+    map.addEventListener('moveend', scheduleMarkerCollisions)
+    scheduleMarkerCollisions()
+
     const draw = async () => {
+      if (!visibility.routes) {
+        setRouteActivity({ pending: 0, retries: 0 })
+        return
+      }
       const resolved: ResolvedLeg[] = []
       const queue = [...allGroups].sort(
         (left, right) =>
@@ -580,8 +586,15 @@ export function BaiduMapCanvas({
             const color = DAY_COLORS[group.dayIndex % DAY_COLORS.length]
             const line = new BMapGL.Polyline(result.path, {
               strokeColor: color,
-              strokeWeight: active ? 7 : 4,
-              strokeOpacity: active ? 0.9 : 0.48,
+              strokeWeight: active || focusMode === 'driving' ? 7 : 4,
+              strokeOpacity:
+                focusMode === 'overview' || focusMode === 'driving'
+                  ? active || focusMode === 'driving'
+                    ? 0.9
+                    : 0.48
+                  : active
+                    ? 0.28
+                    : 0.16,
             })
             line.addEventListener('click', () => {
               if (scope.mode === 'global') {
@@ -595,14 +608,22 @@ export function BaiduMapCanvas({
               text: string
               daySummary: boolean
             }> = []
-            if (scope.mode === 'global') {
+            if (
+              visibility.distances &&
+              focusShowsDistances(focusMode) &&
+              scope.mode === 'global'
+            ) {
               labelPairs.push({
                 stop: group.stops.at(-1)!,
                 previous: group.stops[0],
                 text: `第 ${group.dayIndex + 1} 天 · ${result.distanceKm.toFixed(0)} km`,
                 daySummary: true,
               })
-            } else if (active) {
+            } else if (
+              visibility.distances &&
+              focusShowsDistances(focusMode) &&
+              active
+            ) {
               labelPairs.push(
                 ...group.stops.slice(1).map((stop, index) => ({
                   stop,
@@ -683,6 +704,9 @@ export function BaiduMapCanvas({
     const fitStops = relevantGroups.flatMap((group) => group.stops)
     fitPoints(BMapGL, map, fitStops.length ? fitStops : markerEntries.map(({ stop }) => stop))
     return () => {
+      window.clearTimeout(collisionTimer)
+      map.removeEventListener?.('zoomend', scheduleMarkerCollisions)
+      map.removeEventListener?.('moveend', scheduleMarkerCollisions)
       requestController.abort()
       if (generationRef.current === generation) generationRef.current += 1
     }
@@ -696,8 +720,8 @@ export function BaiduMapCanvas({
     onSelectStop,
     roadbook,
     selectedStopId,
-    showKnowledge,
     scope,
+    visibility,
   ])
 
   const selectedRelevantFrom = selectedFrom || null
@@ -724,6 +748,8 @@ export function BaiduMapCanvas({
       )
     }
   }
+  const patchVisibility = (key: keyof MapVisibility) =>
+    setVisibility((current) => ({ ...current, [key]: !current[key] }))
 
   return (
     <section className="map-shell baidu-map-shell" aria-label="百度路书地图">
@@ -757,7 +783,14 @@ export function BaiduMapCanvas({
               type="button"
               key={mode.value}
               className={focusMode === mode.value ? 'is-active' : ''}
-              onClick={() => setFocusMode(mode.value)}
+              onClick={() => {
+                setFocusMode(mode.value)
+                setVisibility((current) => visibilityForFocus(current, mode.value))
+                setSelectedElement(null)
+                setDetailExpanded(false)
+                if (selectedStopId) setDismissedStopId(selectedStopId)
+              }}
+              title={`${mode.label}专题`}
             >
               <Icon size={15} />
               {mode.label}
@@ -779,8 +812,8 @@ export function BaiduMapCanvas({
         </button>
         <button
           type="button"
-          className={traffic ? 'is-active' : ''}
-          onClick={() => setTraffic((current) => !current)}
+          className={visibility.traffic ? 'is-active' : ''}
+          onClick={() => patchVisibility('traffic')}
           title="实时路况"
         >
           <TrafficCone size={17} />
@@ -798,14 +831,48 @@ export function BaiduMapCanvas({
         >
           <Ruler size={17} />
         </button>
-        <button
-          type="button"
-          className={showKnowledge ? 'is-active' : ''}
-          onClick={() => setShowKnowledge((current) => !current)}
-          title="规划景点"
-        >
-          <Layers3 size={17} />
-        </button>
+        <div className="map-layer-menu-wrap">
+          <button
+            type="button"
+            className={layerMenuOpen ? 'is-active' : ''}
+            onClick={() => setLayerMenuOpen((current) => !current)}
+            title="地图图例"
+            aria-expanded={layerMenuOpen}
+            aria-controls="baidu-layer-legend"
+          >
+            <Layers3 size={17} />
+            <ChevronDown size={12} />
+          </button>
+          {layerMenuOpen ? (
+            <div
+              className="map-layer-menu"
+              id="baidu-layer-legend"
+              role="group"
+              aria-label="地图图例"
+            >
+              {(
+                [
+                  ['routes', '导航曲线'],
+                  ['distances', '路段公里数'],
+                  ['scenic', '景点'],
+                  ['knowledge', '规划景点'],
+                  ['hotels', '酒店'],
+                  ['costs', '费用'],
+                  ['labels', '地点标签'],
+                ] as Array<[keyof MapVisibility, string]>
+              ).map(([key, label]) => (
+                <label key={key}>
+                  <input
+                    type="checkbox"
+                    checked={visibility[key]}
+                    onChange={() => patchVisibility(key)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
           disabled={!selectedStop && !selectedKnowledgeStop}
@@ -835,7 +902,10 @@ export function BaiduMapCanvas({
         <strong>{scopeLabel(roadbook, scope)}</strong>
         <span />
         驾车 <strong>{scopeDrivingDistance(roadbook, scope).toFixed(0)}</strong> 公里
-        {scope.mode === 'global' && knowledgePlaces.length ? (
+        {scope.mode === 'global' &&
+        visibility.knowledge &&
+        focusShowsKnowledge(focusMode) &&
+        knowledgePlaces.length ? (
           <>
             <span />
             <strong>{knowledgePlaces.length}</strong> 个规划点

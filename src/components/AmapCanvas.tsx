@@ -41,6 +41,20 @@ import {
   type RouteGroup,
 } from '@/lib/map-routes'
 import {
+  applyMarkerOffsets,
+  calculateMarkerOffsets,
+  createKnowledgeMarkerElement,
+  createStopMarkerElement,
+  DEFAULT_MAP_VISIBILITY,
+  focusAllowsStop,
+  focusShowsDayLabels,
+  focusShowsDistances,
+  focusShowsFuel,
+  focusShowsKnowledge,
+  visibilityAllowsStop,
+  visibilityForFocus,
+} from '@/lib/map-markers'
+import {
   buildAmapNavigationUrl,
   buildAmapPlaceUrl,
   loadAMap,
@@ -59,7 +73,6 @@ import type {
   MapFocusMode,
   MapScope,
   MapVisibility,
-  PlacePhoto,
   ResolvedLeg,
   Roadbook,
   TripStop,
@@ -103,18 +116,6 @@ const focusModes: Array<{ value: MapFocusMode; label: string; icon: typeof MapIc
   { value: 'hotel', label: '酒店', icon: BedDouble },
 ]
 
-const defaultVisibility: MapVisibility = {
-  routes: true,
-  distances: true,
-  scenic: true,
-  knowledge: true,
-  hotels: true,
-  costs: true,
-  fuel: false,
-  labels: true,
-  traffic: false,
-}
-
 const roadTypeLabels = {
   highway: '高速',
   national: '国道',
@@ -130,132 +131,6 @@ const signalLabels = {
   weak: '信号间歇',
   none: '无信号',
   unknown: '待确认',
-}
-
-function markerElement({
-  dayIndex,
-  stopIndex,
-  stop,
-  photo,
-  selected,
-  dimmed,
-  showNumber,
-  showLabel,
-  focusMode,
-}: {
-  dayIndex: number
-  stopIndex: number
-  stop: TripStop
-  photo?: PlacePhoto
-  selected: boolean
-  dimmed: boolean
-  showNumber: boolean
-  showLabel: boolean
-  focusMode: MapFocusMode
-}) {
-  const marker = document.createElement('button')
-  marker.type = 'button'
-  marker.className = [
-    'map-marker-v2',
-    selected ? 'is-selected' : '',
-    dimmed ? 'is-dimmed' : '',
-    `is-${stop.type}`,
-  ]
-    .filter(Boolean)
-    .join(' ')
-  marker.style.setProperty('--marker-color', DAY_COLORS[dayIndex % DAY_COLORS.length])
-  marker.setAttribute('aria-label', `第 ${dayIndex + 1} 天，第 ${stopIndex + 1} 站，${stop.name}`)
-
-  const pin = document.createElement('span')
-  pin.className = 'map-marker-pin'
-  const fallback = document.createElement('i')
-  fallback.className = 'map-marker-fallback'
-  fallback.textContent = stop.type === 'hotel' ? '住' : stop.type === 'fuel' ? '油' : '景'
-  pin.appendChild(fallback)
-  if (photo) {
-    const image = document.createElement('img')
-    image.alt = ''
-    image.onload = () => {
-      if (photo.source === 'generated' && image.naturalWidth === image.naturalHeight) {
-        image.remove()
-      }
-      else fallback.remove()
-    }
-    image.onerror = () => image.remove()
-    image.src = photo.url
-    pin.appendChild(image)
-  }
-  if (showNumber) {
-    const number = document.createElement('b')
-    number.textContent = String(stopIndex + 1)
-    pin.appendChild(number)
-  }
-  marker.appendChild(pin)
-
-  const label = document.createElement('span')
-  label.className = 'map-marker-label'
-  const name = document.createElement('b')
-  name.textContent = stop.name
-  label.appendChild(name)
-
-  if (focusMode === 'cost') {
-    const cost = document.createElement('small')
-    cost.textContent = `¥${stopCost(stop).toLocaleString('zh-CN')}`
-    label.appendChild(cost)
-    if (stop.expenses.length) {
-      const details = document.createElement('em')
-      details.className = 'map-cost-detail'
-      details.textContent = stop.expenses
-        .map((expense) => `${expense.label} ¥${expense.amount}`)
-        .join(' · ')
-      label.appendChild(details)
-    }
-  } else {
-    const type = document.createElement('small')
-    type.textContent =
-      stop.type === 'hotel'
-        ? '住宿'
-        : stop.type === 'scenic'
-          ? '景点'
-          : stop.type === 'fuel'
-            ? '加油'
-            : stop.arrivalTime
-    label.appendChild(type)
-  }
-  if (showLabel) marker.appendChild(label)
-  return marker
-}
-
-function knowledgeMarkerElement(place: KnowledgePlace, photo?: PlacePhoto) {
-  const marker = document.createElement('button')
-  marker.type = 'button'
-  marker.className = [
-    'knowledge-map-marker',
-    place.isNiche ? 'is-niche' : 'is-core',
-    /不可前往|放弃|封闭/.test(place.recommendation) ? 'is-caution' : '',
-  ].filter(Boolean).join(' ')
-  marker.title = `${place.name} · ${place.recommendation}`
-  marker.setAttribute('aria-label', `规划景点，${place.name}，${place.recommendation}`)
-
-  const fallback = document.createElement('span')
-  fallback.textContent = place.isNiche ? '秘' : '景'
-  marker.appendChild(fallback)
-
-  if (photo) {
-    const image = document.createElement('img')
-    image.alt = ''
-    image.onload = () => {
-      if (photo.source !== 'generated' || image.naturalWidth !== image.naturalHeight) {
-        fallback.remove()
-      } else {
-        image.remove()
-      }
-    }
-    image.onerror = () => image.remove()
-    image.src = photo.url
-    marker.appendChild(image)
-  }
-  return marker
 }
 
 function fuelMarkerElement(name: string) {
@@ -409,7 +284,7 @@ export function AmapCanvas({
   const [mapReady, setMapReady] = useState(false)
   const [focusMode, setFocusMode] = useState<MapFocusMode>('overview')
   const [baseLayer, setBaseLayer] = useState<MapBaseLayer>('standard')
-  const [visibility, setVisibility] = useState<MapVisibility>(defaultVisibility)
+  const [visibility, setVisibility] = useState<MapVisibility>(DEFAULT_MAP_VISIBILITY)
   const [layerMenuOpen, setLayerMenuOpen] = useState(false)
   const [measuring, setMeasuring] = useState(false)
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null)
@@ -526,6 +401,12 @@ export function AmapCanvas({
     const relevantStopIds = new Set(
       markerEntries.filter(({ relevant }) => relevant).map(({ stop }) => stop.id),
     )
+    const markerVisuals: Array<{
+      id: string
+      location: [number, number]
+      element: HTMLElement
+      priority: number
+    }> = []
 
     roadbook.days.forEach((day, dayIndex) => {
       if (scope.mode !== 'global' && day.id !== activeDayId) return
@@ -533,31 +414,30 @@ export function AmapCanvas({
 
       stops.forEach((stop, stopIndex) => {
         if (!selfDriveIds.has(stop.id)) return
-        const relevant =
-          focusMode === 'overview' ||
-          focusMode === 'cost' ||
-          focusMode === 'driving' ||
-          (focusMode === 'scenic' && stop.type === 'scenic') ||
-          (focusMode === 'hotel' && stop.type === 'hotel')
         const emphasizeMarker =
-          scope.mode === 'global' || (relevantStopIds.has(stop.id) && relevant)
+          scope.mode === 'global' || relevantStopIds.has(stop.id)
         const typeVisible =
-          (stop.type !== 'scenic' || visibility.scenic) &&
-          (stop.type !== 'hotel' || visibility.hotels)
+          visibilityAllowsStop(visibility, stop) &&
+          focusAllowsStop(focusMode, stop) &&
+          (focusMode !== 'cost' || visibility.costs)
         if (typeVisible) {
+          const content = createStopMarkerElement({
+            dayIndex,
+            stopIndex,
+            stop,
+            photos: placeLibraryEntry(roadbook, stop).photos,
+            selected: selectedStopId === stop.id,
+            dimmed: !emphasizeMarker,
+            showNumber: scope.mode !== 'global',
+            showLabel:
+              scope.mode !== 'global' &&
+              emphasizeMarker &&
+              visibility.labels,
+            focusMode,
+          })
           const marker = new AMap.Marker({
             position: stop.location,
-            content: markerElement({
-              dayIndex,
-              stopIndex,
-              stop,
-              photo: placeLibraryEntry(roadbook, stop).photos[0],
-              selected: selectedStopId === stop.id,
-              dimmed: !emphasizeMarker,
-              showNumber: scope.mode !== 'global',
-              showLabel: scope.mode !== 'global' && emphasizeMarker,
-              focusMode: focusMode === 'cost' && !visibility.costs ? 'overview' : focusMode,
-            }),
+            content,
             anchor: 'bottom-center',
             zIndex: selectedStopId === stop.id ? 160 : emphasizeMarker ? 130 : 110,
             title: stop.name,
@@ -568,13 +448,19 @@ export function AmapCanvas({
             setSelectedElement({ kind: 'stop', dayId: day.id, stopId: stop.id })
           })
           marker.setMap(map)
+          markerVisuals.push({
+            id: `stop:${stop.id}`,
+            location: stop.location,
+            element: content,
+            priority: selectedStopId === stop.id ? 1000 : 500,
+          })
         }
 
         if (
           (scope.mode === 'global' || day.id === activeDayId) &&
           relevantStopIds.has(stop.id) &&
           visibility.labels &&
-          focusMode !== 'cost' &&
+          focusShowsDayLabels(focusMode) &&
           relevantGroups.some((group) => group.stops[0]?.id === stop.id)
         ) {
           const label = new AMap.Text({
@@ -598,7 +484,7 @@ export function AmapCanvas({
       })
     })
 
-    if (visibility.knowledge && (focusMode === 'overview' || focusMode === 'scenic')) {
+    if (visibility.knowledge && focusShowsKnowledge(focusMode)) {
       const scopeDayIndex =
         scope.mode === 'global'
           ? undefined
@@ -613,9 +499,9 @@ export function AmapCanvas({
           setSelectedElement({ kind: 'knowledge', placeId: place.id })
           setDismissedStopId(null)
         }
-        const content = knowledgeMarkerElement(
+        const content = createKnowledgeMarkerElement(
           place,
-          placeLibraryEntry(roadbook, virtualStop).photos[0],
+          placeLibraryEntry(roadbook, virtualStop).photos,
         )
         content.addEventListener('click', selectKnowledgePlace)
         const marker = new AMap.Marker({
@@ -627,8 +513,35 @@ export function AmapCanvas({
         })
         marker.on('click', selectKnowledgePlace)
         marker.setMap(map)
+        markerVisuals.push({
+          id: `knowledge:${place.id}`,
+          location: place.location,
+          element: content,
+          priority: place.isNiche ? 50 : 100,
+        })
       })
     }
+
+    let collisionTimer = 0
+    const updateMarkerCollisions = () => {
+      if (generationRef.current !== generation || !map.lngLatToContainer) return
+      const projected = markerVisuals.flatMap((item) => {
+        const pixel = map.lngLatToContainer(new AMap.LngLat(...item.location))
+        const x = Number(pixel?.x ?? pixel?.getX?.())
+        const y = Number(pixel?.y ?? pixel?.getY?.())
+        return Number.isFinite(x) && Number.isFinite(y)
+          ? [{ id: item.id, x, y, priority: item.priority }]
+          : []
+      })
+      applyMarkerOffsets(markerVisuals, calculateMarkerOffsets(projected))
+    }
+    const scheduleMarkerCollisions = () => {
+      window.clearTimeout(collisionTimer)
+      collisionTimer = window.setTimeout(updateMarkerCollisions, 80)
+    }
+    map.on('zoomend', scheduleMarkerCollisions)
+    map.on('moveend', scheduleMarkerCollisions)
+    scheduleMarkerCollisions()
 
     const drawRoutes = async () => {
       if (!visibility.routes) return
@@ -675,15 +588,19 @@ export function AmapCanvas({
             strokeColor: color,
             strokeWeight: active || focusMode === 'driving' ? 6 : 4,
             strokeOpacity:
-              focusMode === 'hotel' || focusMode === 'scenic'
-                ? 0.18
-                : active || focusMode === 'driving'
+              focusMode === 'overview' || focusMode === 'driving'
+                ? active || focusMode === 'driving'
                   ? 0.86
-                  : 0.42,
+                  : 0.42
+                : active
+                  ? 0.28
+                  : 0.16,
             strokeStyle: 'solid',
             lineJoin: 'round',
             lineCap: 'round',
-            showDir: active || focusMode === 'driving',
+            showDir:
+              focusMode === 'driving' ||
+              (focusMode === 'overview' && active),
             cursor: 'pointer',
             zIndex: active ? 90 : 70,
           })
@@ -706,7 +623,7 @@ export function AmapCanvas({
             })
           }
 
-          if (visibility.distances) {
+          if (visibility.distances && focusShowsDistances(focusMode)) {
             if (scope.mode === 'global') {
               const middle = path[Math.floor(path.length / 2)]
               const content = document.createElement('button')
@@ -775,7 +692,7 @@ export function AmapCanvas({
 
     void drawRoutes()
 
-    if (visibility.fuel) {
+    if (visibility.fuel && focusShowsFuel(focusMode)) {
       const activeDay = roadbook.days.find((day) => day.id === activeDayId)
       const stops = activeDay ? visibleStops(activeDay) : []
       const drivingPairs = stops
@@ -831,6 +748,9 @@ export function AmapCanvas({
     }
 
     return () => {
+      window.clearTimeout(collisionTimer)
+      map.off?.('zoomend', scheduleMarkerCollisions)
+      map.off?.('moveend', scheduleMarkerCollisions)
       if (generationRef.current === generation) {
         generationRef.current += 1
       }
@@ -845,14 +765,7 @@ export function AmapCanvas({
     roadbook,
     scope,
     selectedStopId,
-    visibility.costs,
-    visibility.distances,
-    visibility.fuel,
-    visibility.hotels,
-    visibility.knowledge,
-    visibility.labels,
-    visibility.routes,
-    visibility.scenic,
+    visibility,
   ])
 
   const openSelectedInAmap = () => {
@@ -900,7 +813,13 @@ export function AmapCanvas({
               type="button"
               key={mode.value}
               className={focusMode === mode.value ? 'is-active' : ''}
-              onClick={() => setFocusMode(mode.value)}
+              onClick={() => {
+                setFocusMode(mode.value)
+                setVisibility((current) => visibilityForFocus(current, mode.value))
+                setSelectedElement(null)
+                setDetailExpanded(false)
+                if (selectedStopId) setDismissedStopId(selectedStopId)
+              }}
               title={`${mode.label}专题`}
             >
               <Icon size={15} />
@@ -940,13 +859,15 @@ export function AmapCanvas({
             type="button"
             className={layerMenuOpen ? 'is-active' : ''}
             onClick={() => setLayerMenuOpen((current) => !current)}
-            title="地图要素"
+            title="地图图例"
+            aria-expanded={layerMenuOpen}
+            aria-controls="amap-layer-legend"
           >
             <Layers3 size={17} />
             <ChevronDown size={12} />
           </button>
           {layerMenuOpen ? (
-            <div className="map-layer-menu">
+            <div className="map-layer-menu" id="amap-layer-legend" role="group" aria-label="地图图例">
               {(
                 [
                   ['routes', '导航曲线'],
@@ -986,7 +907,10 @@ export function AmapCanvas({
         <strong>{scopeLabel(roadbook, scope)}</strong>
         <span />
         驾车 <strong>{scopeDrivingDistance(roadbook, scope).toFixed(0)}</strong> 公里
-        {scope.mode === 'global' && knowledgePlaces.length ? (
+        {scope.mode === 'global' &&
+        visibility.knowledge &&
+        focusShowsKnowledge(focusMode) &&
+        knowledgePlaces.length ? (
           <>
             <span />
             <strong>{knowledgePlaces.length}</strong> 个规划点

@@ -4202,3 +4202,162 @@ textarea:focus-visible {
 .map-detail-panel h3 {
   margin-right: 64px;
 }
+
+/* Version 12 fused and collision-aware map markers */
+.map-marker-v2 {
+  --marker-shift-x: 0px;
+  --marker-shift-y: 0px;
+  position: relative;
+  display: block;
+  width: 42px;
+  height: 52px;
+  min-width: 42px;
+  min-height: 52px;
+  overflow: visible;
+  transform: translate(
+    var(--marker-shift-x),
+    calc(var(--marker-shift-y) - 2px)
+  );
+  transform-origin: 21px 52px;
+  transition:
+    opacity 140ms ease,
+    transform 160ms ease;
+}
+
+.map-marker-v2.is-selected {
+  transform: translate(
+      var(--marker-shift-x),
+      calc(var(--marker-shift-y) - 5px)
+    )
+    scale(1.08);
+}
+
+.map-marker-v2.has-collision:not(.is-selected):not(:hover):not(:focus-visible) {
+  opacity: 0.72;
+}
+
+.map-marker-pin {
+  position: relative;
+  display: block;
+  width: 42px;
+  height: 42px;
+  overflow: visible;
+  border: 3px solid #fff;
+  border-radius: 21px;
+  background: var(--marker-color);
+  box-shadow: 0 3px 9px rgba(24, 39, 53, 0.28);
+  transform: none;
+}
+
+.map-marker-pin.has-number {
+  height: 50px;
+  border-radius: 21px 21px 8px 8px;
+}
+
+.map-marker-pin::after {
+  position: absolute;
+  z-index: -1;
+  bottom: -6px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  border-right: 3px solid #fff;
+  border-bottom: 3px solid #fff;
+  background: var(--marker-color);
+  content: "";
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.map-marker-pin img {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 18px;
+  object-fit: cover;
+}
+
+.map-marker-pin.has-number img {
+  height: 34px;
+  border-radius: 18px 18px 4px 4px;
+}
+
+.map-marker-fallback {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 100%;
+  color: #fff;
+  font-size: 12px;
+  transform: none;
+}
+
+.map-marker-pin.has-number .map-marker-fallback {
+  height: 34px;
+}
+
+.map-marker-pin b {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  width: auto;
+  height: 16px;
+  place-items: center;
+  border: 0;
+  border-radius: 0 0 5px 5px;
+  background: var(--marker-color);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  transform: none;
+}
+
+.map-marker-label {
+  position: absolute;
+  z-index: 0;
+  top: 8px;
+  left: 38px;
+  margin-left: 0;
+  padding-left: 9px;
+  pointer-events: none;
+  transition:
+    opacity 140ms ease,
+    transform 160ms ease;
+}
+
+.map-marker-v2.is-collision-shifted:not(.is-selected):not(:hover):not(:focus-visible)
+  .map-marker-label {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-5px);
+}
+
+.knowledge-map-marker {
+  --marker-shift-x: 0px;
+  --marker-shift-y: 0px;
+  transform: translate(var(--marker-shift-x), var(--marker-shift-y));
+}
+
+.knowledge-map-marker.has-collision:not(:hover):not(:focus-visible) {
+  opacity: 0.4;
+}
+
+.knowledge-map-marker:hover,
+.knowledge-map-marker:focus-visible {
+  transform: translate(var(--marker-shift-x), var(--marker-shift-y)) scale(1.14);
+}
+
+.baidu-html-marker {
+  position: absolute;
+  margin: 0;
+  pointer-events: auto;
+}
