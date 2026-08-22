@@ -503,7 +503,7 @@ export function AmapCanvas({
         ) {
           const label = new AMap.Text({
             position: stop.location,
-            text: `D${dayIndex + 1} · ${day.title}`,
+            text: `第 ${dayIndex + 1} 天 · ${day.title}`,
             anchor: 'bottom-left',
             offset: new AMap.Pixel(16, -45),
             style: {

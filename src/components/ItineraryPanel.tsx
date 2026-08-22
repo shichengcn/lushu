@@ -6,6 +6,7 @@ import {
   BedDouble,
   Bike,
   BusFront,
+  CalendarDays,
   Car,
   Clock3,
   ChevronDown,
@@ -190,9 +191,14 @@ export function ItineraryPanel({
                 className="day-heading"
                 onClick={() => onToggleDay(day.id)}
               >
-                <b className="day-number-large">{dayIndex + 1}</b>
+                <span className="day-number-large" aria-hidden="true">
+                  <CalendarDays size={16} />
+                  <b>第 {dayIndex + 1} 天</b>
+                </span>
                 <span className="day-heading-copy">
-                  <small>第 {dayIndex + 1} 天 · {formatCompactDate(day.date)}</small>
+                  <small>
+                    {formatCompactDate(day.date)} · {visibleStops(day).length} 个地点
+                  </small>
                   <strong>{day.title}</strong>
                   <em>
                     {visibleStops(day)[0]?.name || '暂无节点'}
@@ -308,7 +314,20 @@ export function ItineraryPanel({
                         onClick={() => onSelectStop(stop.id)}
                         aria-label={`在地图上查看${stop.name}`}
                       >
-                        {stop.hidden ? <EyeOff size={18} /> : visibleOrdinal}
+                        {stop.hidden ? (
+                          <span className="stop-index-hidden" aria-hidden="true">
+                            <EyeOff size={18} />
+                            <small>隐藏</small>
+                          </span>
+                        ) : (
+                          <>
+                            <span className="stop-index-marker" aria-hidden="true">
+                              <MapPin size={40} />
+                              <b>{visibleOrdinal}</b>
+                            </span>
+                            <small className="stop-index-kind">节点</small>
+                          </>
+                        )}
                       </button>
                       <button
                         type="button"

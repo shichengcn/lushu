@@ -1,7 +1,6 @@
 import { RateLimitedRetryQueue, type QueueRunOptions } from '@/lib/async-request-queue'
 
-const BAIDU_KEY =
-  import.meta.env.VITE_BAIDU_MAP_KEY || 'RggonQuu8xGmZCLRMgpg4OLt5BaRr0Wd'
+const BAIDU_KEY = import.meta.env.VITE_BAIDU_MAP_KEY?.trim()
 
 export const BAIDU_REQUEST_INTERVAL_MS = 500
 export const BAIDU_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000] as const
@@ -32,6 +31,9 @@ export function queueBaiduRequest<T>(
 }
 
 export function loadBaiduMap() {
+  if (!BAIDU_KEY) {
+    return Promise.reject(new Error('百度地图本地密钥未配置，请检查 .env.local'))
+  }
   if (window.BMapGL) return Promise.resolve(window.BMapGL)
   if (baiduPromise) return baiduPromise
 

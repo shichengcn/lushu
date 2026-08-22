@@ -32,7 +32,7 @@ pnpm dev
 固定访问 `http://127.0.0.1:4173/`，避免端口或主机名变化后进入另一份浏览器
 存储。
 
-高德 Web 端 Key 和安全密钥可在 `.env.local` 中覆盖：
+地图凭据只从本机 `.env.local` 读取：
 
 ```bash
 cp .env.example .env.local
@@ -44,7 +44,7 @@ VITE_AMAP_SECURITY_CODE=your_amap_security_code
 VITE_BAIDU_MAP_KEY=your_baidu_browser_ak
 ```
 
-当前项目内置了项目要求中提供的 Web 端配置，克隆后可直接运行。
+`.env.local` 已被 Git 忽略，不得提交或上传；仓库内不包含可用的地图凭据。
 
 ## 检查
 

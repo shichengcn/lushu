@@ -481,7 +481,7 @@ export function BaiduMapCanvas({
               labelPairs.push({
                 stop: group.stops.at(-1)!,
                 previous: group.stops[0],
-                text: `D${group.dayIndex + 1} · ${result.distanceKm.toFixed(0)} km`,
+                text: `第 ${group.dayIndex + 1} 天 · ${result.distanceKm.toFixed(0)} km`,
                 daySummary: true,
               })
             } else if (active) {

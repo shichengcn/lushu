@@ -9,13 +9,15 @@ declare global {
   }
 }
 
-const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || 'd883ed71b801d6ce344f7cd3a330535a'
-const AMAP_SECURITY_CODE =
-  import.meta.env.VITE_AMAP_SECURITY_CODE || 'acef0dccf36fa7c4adc3f9e90c18730d'
+const AMAP_KEY = import.meta.env.VITE_AMAP_KEY?.trim()
+const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE?.trim()
 
 let amapPromise: Promise<any> | null = null
 
 export function loadAMap() {
+  if (!AMAP_KEY || !AMAP_SECURITY_CODE) {
+    return Promise.reject(new Error('高德地图本地密钥未配置，请检查 .env.local'))
+  }
   if (!amapPromise) {
     window._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE }
     amapPromise = AMapLoader.load({
