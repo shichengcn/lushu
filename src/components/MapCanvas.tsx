@@ -2,6 +2,7 @@ import { Map as MapIcon, Route, Waypoints } from 'lucide-react'
 import { AmapCanvas } from '@/components/AmapCanvas'
 import { BaiduMapCanvas } from '@/components/BaiduMapCanvas'
 import type {
+  KnowledgePlace,
   MapProvider,
   MapScope,
   ResolvedLeg,
@@ -20,8 +21,9 @@ interface MapCanvasProps {
   onSelectStop: (stopId: string) => void
   onEditStop: (stop: TripStop, previousStop: TripStop | null, dayId: string) => void
   onRoutesResolved: (legs: ResolvedLeg[]) => void
-  onAddPlacePhoto: (stopId: string, file: File) => Promise<void>
-  onAddPlaceNote: (stopId: string, text: string) => void
+  onAddPlacePhoto: (stop: TripStop, file: File) => Promise<void>
+  onAddPlaceNote: (stop: TripStop, text: string) => void
+  onAddKnowledgePlace: (place: KnowledgePlace) => void
   readOnly: boolean
 }
 
@@ -38,6 +40,7 @@ export function MapCanvas(props: MapCanvasProps) {
     onRoutesResolved: props.onRoutesResolved,
     onAddPlacePhoto: props.onAddPlacePhoto,
     onAddPlaceNote: props.onAddPlaceNote,
+    onAddKnowledgePlace: props.onAddKnowledgePlace,
     readOnly: props.readOnly,
   }
 

@@ -353,6 +353,7 @@ function App() {
             onRoutesResolved={controller.handleRoutesResolved}
             onAddPlacePhoto={controller.addPlacePhoto}
             onAddPlaceNote={controller.addPlaceNote}
+            onAddKnowledgePlace={controller.addKnowledgePlace}
             readOnly={readOnly}
           />
         </main>

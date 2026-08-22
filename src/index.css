@@ -3750,13 +3750,13 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-.day-section.is-active .day-number-large {
+.day-section.is-active.is-expanded .day-number-large {
   border-color: var(--day-color);
   background: var(--day-color);
   color: #fff;
 }
 
-.day-section.is-active .day-number-large svg {
+.day-section.is-active.is-expanded .day-number-large svg {
   color: #fff;
 }
 
@@ -3850,5 +3850,117 @@ textarea:focus-visible {
 
   .day-section .day-number-large b {
     font-size: 15px;
+  }
+}
+
+/* Version 10 knowledge map */
+.map-marker-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--marker-color);
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 800;
+  transform: rotate(45deg);
+}
+
+.knowledge-map-marker {
+  position: relative;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  overflow: hidden;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #486572;
+  box-shadow: 0 3px 9px rgba(24, 39, 53, 0.24);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0.5;
+  padding: 0;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.knowledge-map-marker.is-core {
+  border-color: #c9ecea;
+  background: #177f7b;
+  opacity: 0.62;
+}
+
+.knowledge-map-marker.is-caution {
+  border-color: #f0c8bf;
+  background: #915246;
+}
+
+.knowledge-map-marker:hover,
+.knowledge-map-marker:focus-visible {
+  z-index: 3;
+  opacity: 1;
+  outline: none;
+  transform: scale(1.14);
+  box-shadow: 0 0 0 3px rgba(16, 167, 162, 0.18), 0 5px 14px rgba(24, 39, 53, 0.28);
+}
+
+.knowledge-map-marker img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.knowledge-map-marker > span {
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.knowledge-place-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 8px 0;
+}
+
+.knowledge-place-tags span {
+  border: 1px solid #d9e2e7;
+  border-radius: 3px;
+  background: #f4f7f8;
+  color: #53626f;
+  font-size: 10px;
+  font-weight: 650;
+  padding: 3px 6px;
+}
+
+.knowledge-place-summary {
+  color: #4e5d69;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 8px 0 10px;
+}
+
+.knowledge-place-facts dd {
+  max-height: 86px;
+  overflow: auto;
+  line-height: 1.55;
+}
+
+.knowledge-place-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.knowledge-place-actions button {
+  margin: 0;
+}
+
+@media (max-width: 700px) {
+  .knowledge-place-actions {
+    grid-template-columns: 1fr;
   }
 }

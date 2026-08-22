@@ -7,8 +7,8 @@ interface PlaceMediaGalleryProps {
   roadbook: Roadbook
   stop: TripStop
   readOnly?: boolean
-  onAddPhoto: (stopId: string, file: File) => Promise<void>
-  onAddNote: (stopId: string, text: string) => void
+  onAddPhoto: (stop: TripStop, file: File) => Promise<void>
+  onAddNote: (stop: TripStop, text: string) => void
 }
 
 export function PlaceThumbnail({ photo }: { photo: PlacePhoto }) {
@@ -61,7 +61,7 @@ export function PlaceMediaGallery({
     if (!file) return
     setUploading(true)
     try {
-      await onAddPhoto(stop.id, file)
+      await onAddPhoto(stop, file)
     } finally {
       setUploading(false)
       if (inputRef.current) inputRef.current.value = ''
@@ -70,7 +70,7 @@ export function PlaceMediaGallery({
 
   const addNote = () => {
     if (!note.trim()) return
-    onAddNote(stop.id, note)
+    onAddNote(stop, note)
     setNote('')
   }
 

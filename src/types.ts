@@ -68,6 +68,31 @@ export interface PlaceLibraryEntry {
   updatedAt: string
 }
 
+export interface KnowledgePlace {
+  id: string
+  name: string
+  aliases: string
+  region: string
+  category: string
+  isNiche: boolean
+  ticketCny: string
+  shuttleCny: string
+  altitudeM: string
+  visitHours: string
+  bestTime: string
+  roadRequirement: string
+  signal: string
+  rating: string
+  recommendation: string
+  suggestedDay: string
+  detourNote: string
+  summary: string
+  openTime: string
+  refUrl: string
+  address: string
+  location: [number, number]
+}
+
 export interface Traveler {
   id: string
   name: string
@@ -111,6 +136,7 @@ export interface TripDay {
 
 export interface Roadbook {
   id: string
+  dataVersion?: number
   title: string
   summary: string
   startDate: string
@@ -145,6 +171,7 @@ export interface MapVisibility {
   routes: boolean
   distances: boolean
   scenic: boolean
+  knowledge: boolean
   hotels: boolean
   costs: boolean
   fuel: boolean

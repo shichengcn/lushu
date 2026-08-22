@@ -14,6 +14,7 @@ import {
   hydratePlaceLibrary,
   loadRoadbooks,
   migrateRoadbookV6,
+  migrateRoadbookV10,
   normalizeRoadbook,
   parseSharedRoadbook,
   recalculateDayDates,
@@ -33,7 +34,14 @@ import {
   placeLibraryEntry,
   placeLibraryKey,
 } from '@/lib/place-media'
-import type { ResolvedLeg, Roadbook, TripDay, TripStop } from '@/types'
+import { knowledgePlaceToStop } from '@/lib/qinggan-v10'
+import type {
+  KnowledgePlace,
+  ResolvedLeg,
+  Roadbook,
+  TripDay,
+  TripStop,
+} from '@/types'
 
 const INITIAL_SHARED_ROADBOOK = parseSharedRoadbook()
 const INITIAL_ROADBOOKS = loadRoadbooks()
@@ -130,7 +138,9 @@ export function useRoadbookController() {
           (snapshot.source === 'local' && snapshot.savedAt > storedRoadbooksSavedAt()))
       if (databaseWins) {
         const restored = snapshot.roadbooks.map((roadbook) =>
-          hydratePlaceLibrary(migrateRoadbookV6(normalizeRoadbook(roadbook))),
+          hydratePlaceLibrary(
+            migrateRoadbookV10(migrateRoadbookV6(normalizeRoadbook(roadbook))),
+          ),
         )
         setRoadbooks(restored)
         setActiveRoadbookId(restored[0].id)
@@ -304,14 +314,10 @@ export function useRoadbookController() {
     toast.success(editingStop ? '节点已更新' : '节点已添加')
   }
 
-  const addPlacePhoto = async (stopId: string, file: File) => {
+  const addPlacePhoto = async (stop: TripStop, file: File) => {
     try {
       const url = await compressPlacePhoto(file)
       updateRoadbook((roadbook) => {
-        const stop = roadbook.days
-          .flatMap((day) => day.stops)
-          .find((candidate) => candidate.id === stopId)
-        if (!stop) return roadbook
         const entry = placeLibraryEntry(roadbook, stop)
         return {
           ...roadbook,
@@ -340,13 +346,9 @@ export function useRoadbookController() {
     }
   }
 
-  const addPlaceNote = (stopId: string, text: string) => {
+  const addPlaceNote = (stop: TripStop, text: string) => {
     if (!text.trim()) return
     updateRoadbook((roadbook) => {
-      const stop = roadbook.days
-        .flatMap((day) => day.stops)
-        .find((candidate) => candidate.id === stopId)
-      if (!stop) return roadbook
       const entry = placeLibraryEntry(roadbook, stop)
       return {
         ...roadbook,
@@ -361,6 +363,39 @@ export function useRoadbookController() {
       }
     })
     toast.success('注意事项已加入地点库')
+  }
+
+  const addKnowledgePlace = (place: KnowledgePlace) => {
+    const added = {
+      ...knowledgePlaceToStop(
+        place,
+        activeRoadbook.travelers.map((traveler) => traveler.id),
+      ),
+      id: createId('stop'),
+      legFromPrevious: createLeg('driving', 0, 0),
+    }
+    updateRoadbook((roadbook) => {
+      const key = placeLibraryKey(added)
+      if (
+        roadbook.days.some((day) =>
+          day.stops.some((stop) => placeLibraryKey(stop) === key),
+        )
+      ) {
+        return roadbook
+      }
+      return {
+        ...roadbook,
+        placeLibrary: ensurePlaceLibraryEntry(roadbook.placeLibrary, added),
+        days: roadbook.days.map((day) =>
+          day.id === activeDay.id
+            ? { ...day, stops: relinkStops([...day.stops, added]) }
+            : day,
+        ),
+      }
+    })
+    setExpandedDayId(activeDay.id)
+    setSelectedStopId(added.id)
+    toast.success(`${place.name}已加入第 ${activeRoadbook.days.indexOf(activeDay) + 1} 天`)
   }
 
   const moveStop = (dayId: string, stopId: string, direction: -1 | 1) => {
@@ -684,6 +719,7 @@ export function useRoadbookController() {
     saveStop,
     addPlacePhoto,
     addPlaceNote,
+    addKnowledgePlace,
     moveStop,
     moveStopToDay,
     toggleHidden,

@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "export:local": "node scripts/export-local.mjs",
-    "lint": "oxlint src/App.tsx src/main.tsx src/types.ts src/lib src/hooks/use-roadbook-controller.ts src/components/AmapCanvas.tsx src/components/BaiduMapCanvas.tsx src/components/MapCanvas.tsx src/components/AnalyticsDashboard.tsx src/components/ItineraryPanel.tsx src/components/PlaceEditorDialog.tsx src/components/PlaceMediaGallery.tsx src/components/ShareDialog.tsx src/components/TripLibraryDialog.tsx",
+    "deploy": "node scripts/deploy.mjs",
+    "lint": "oxlint src/App.tsx src/main.tsx src/types.ts src/lib src/hooks/use-roadbook-controller.ts src/components/AmapCanvas.tsx src/components/BaiduMapCanvas.tsx src/components/MapCanvas.tsx src/components/AnalyticsDashboard.tsx src/components/ItineraryPanel.tsx src/components/KnowledgePlaceDetails.tsx src/components/PlaceEditorDialog.tsx src/components/PlaceMediaGallery.tsx src/components/ShareDialog.tsx src/components/TripLibraryDialog.tsx",
     "test": "vitest run",
     "preview": "vite preview"
   },
@@ -77,6 +78,7 @@
     "tailwindcss-animate": "^1.0.7",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.125.0"
   }
 }

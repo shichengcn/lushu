@@ -17,6 +17,7 @@ import {
   TrafficCone,
   X,
 } from 'lucide-react'
+import { KnowledgePlaceDetails } from '@/components/KnowledgePlaceDetails'
 import { PlaceMediaGallery } from '@/components/PlaceMediaGallery'
 import {
   DAY_COLORS,
@@ -41,7 +42,13 @@ import {
   searchNearbyFuelStations,
 } from '@/lib/amap'
 import { placeLibraryEntry } from '@/lib/place-media'
+import {
+  isKnowledgePlaceSelected,
+  knowledgePlacesForScope,
+  knowledgePlaceToStop,
+} from '@/lib/qinggan-v10'
 import type {
+  KnowledgePlace,
   MapBaseLayer,
   MapFocusMode,
   MapScope,
@@ -60,8 +67,9 @@ interface AmapCanvasProps {
   onRoutesResolved: (legs: ResolvedLeg[]) => void
   scope: MapScope
   onScopeChange: (scope: MapScope) => void
-  onAddPlacePhoto: (stopId: string, file: File) => Promise<void>
-  onAddPlaceNote: (stopId: string, text: string) => void
+  onAddPlacePhoto: (stop: TripStop, file: File) => Promise<void>
+  onAddPlaceNote: (stop: TripStop, text: string) => void
+  onAddKnowledgePlace: (place: KnowledgePlace) => void
   readOnly: boolean
 }
 
@@ -75,12 +83,10 @@ interface RouteResult {
   tollRoads?: string[]
 }
 
-interface SelectedElement {
-  kind: 'stop' | 'leg'
-  dayId: string
-  stopId: string
-  fromStopId?: string
-}
+type SelectedElement =
+  | { kind: 'stop'; dayId: string; stopId: string }
+  | { kind: 'leg'; dayId: string; stopId: string; fromStopId: string }
+  | { kind: 'knowledge'; placeId: string }
 
 const focusModes: Array<{ value: MapFocusMode; label: string; icon: typeof MapIcon }> = [
   { value: 'overview', label: '总览', icon: MapIcon },
@@ -94,6 +100,7 @@ const defaultVisibility: MapVisibility = {
   routes: true,
   distances: true,
   scenic: true,
+  knowledge: true,
   hotels: true,
   costs: true,
   fuel: false,
@@ -125,6 +132,8 @@ function markerElement({
   photoUrl,
   selected,
   dimmed,
+  showNumber,
+  showLabel,
   focusMode,
 }: {
   dayIndex: number
@@ -133,6 +142,8 @@ function markerElement({
   photoUrl?: string
   selected: boolean
   dimmed: boolean
+  showNumber: boolean
+  showLabel: boolean
   focusMode: MapFocusMode
 }) {
   const marker = document.createElement('button')
@@ -150,18 +161,26 @@ function markerElement({
 
   const pin = document.createElement('span')
   pin.className = 'map-marker-pin'
+  const fallback = document.createElement('i')
+  fallback.className = 'map-marker-fallback'
+  fallback.textContent = stop.type === 'hotel' ? '住' : stop.type === 'fuel' ? '油' : '景'
+  pin.appendChild(fallback)
   if (photoUrl) {
     const photo = document.createElement('img')
-    photo.src = photoUrl
     photo.alt = ''
     photo.onload = () => {
       if (photo.naturalWidth === photo.naturalHeight) photo.remove()
+      else fallback.remove()
     }
+    photo.onerror = () => photo.remove()
+    photo.src = photoUrl
     pin.appendChild(photo)
   }
-  const number = document.createElement('b')
-  number.textContent = String(stopIndex + 1)
-  pin.appendChild(number)
+  if (showNumber) {
+    const number = document.createElement('b')
+    number.textContent = String(stopIndex + 1)
+    pin.appendChild(number)
+  }
   marker.appendChild(pin)
 
   const label = document.createElement('span')
@@ -194,7 +213,36 @@ function markerElement({
             : stop.arrivalTime
     label.appendChild(type)
   }
-  if (!dimmed) marker.appendChild(label)
+  if (showLabel) marker.appendChild(label)
+  return marker
+}
+
+function knowledgeMarkerElement(place: KnowledgePlace, photoUrl?: string) {
+  const marker = document.createElement('button')
+  marker.type = 'button'
+  marker.className = [
+    'knowledge-map-marker',
+    place.isNiche ? 'is-niche' : 'is-core',
+    /不可前往|放弃|封闭/.test(place.recommendation) ? 'is-caution' : '',
+  ].filter(Boolean).join(' ')
+  marker.title = `${place.name} · ${place.recommendation}`
+  marker.setAttribute('aria-label', `规划景点，${place.name}，${place.recommendation}`)
+
+  const fallback = document.createElement('span')
+  fallback.textContent = place.isNiche ? '秘' : '景'
+  marker.appendChild(fallback)
+
+  if (photoUrl) {
+    const photo = document.createElement('img')
+    photo.src = photoUrl
+    photo.alt = ''
+    photo.onload = () => {
+      if (photo.naturalWidth !== photo.naturalHeight) fallback.remove()
+      else photo.remove()
+    }
+    photo.onerror = () => photo.remove()
+    marker.appendChild(photo)
+  }
   return marker
 }
 
@@ -271,7 +319,7 @@ function FallbackMap({
   scope,
 }: Pick<AmapCanvasProps, 'roadbook' | 'activeDayId' | 'selectedStopId' | 'onSelectStop' | 'scope'>) {
   const allStops = markerEntriesForScope(roadbook, scope).filter(
-    ({ day }) => day.id === activeDayId,
+    ({ day }) => scope.mode === 'global' || day.id === activeDayId,
   )
   const bounds = useMemo(() => {
     if (!allStops.length) return { minLng: 90, maxLng: 122, minLat: 27, maxLat: 42 }
@@ -309,7 +357,7 @@ function FallbackMap({
             onClick={() => onSelectStop(stop.id)}
             title={stop.name}
           >
-            {stopIndex + 1}
+            {scope.mode === 'global' ? `${dayIndex + 1}.${stopIndex + 1}` : stopIndex + 1}
           </button>
         )
       })}
@@ -332,6 +380,7 @@ export function AmapCanvas({
   onScopeChange,
   onAddPlacePhoto,
   onAddPlaceNote,
+  onAddKnowledgePlace,
   readOnly,
 }: AmapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -353,20 +402,36 @@ export function AmapCanvas({
   const [measuring, setMeasuring] = useState(false)
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null)
   const [dismissedStopId, setDismissedStopId] = useState<string | null>(null)
+  const knowledgePlaces = useMemo(() => knowledgePlacesForScope(roadbook), [roadbook])
   const externalSelectedDay = selectedStopId
     ? roadbook.days.find((day) => day.stops.some((stop) => stop.id === selectedStopId))
     : null
   const detailElement =
-    selectedElement && selectedElement.stopId === selectedStopId
+    selectedElement?.kind === 'knowledge'
       ? selectedElement
+      : selectedElement && selectedElement.stopId === selectedStopId
+        ? selectedElement
       : selectedStopId && externalSelectedDay && dismissedStopId !== selectedStopId
         ? { kind: 'stop' as const, dayId: externalSelectedDay.id, stopId: selectedStopId }
         : null
-  const selectedDay = detailElement
+  const selectedKnowledge =
+    detailElement?.kind === 'knowledge'
+      ? knowledgePlaces.find((place) => place.id === detailElement.placeId)
+      : null
+  const selectedKnowledgeStop = selectedKnowledge
+    ? knowledgePlaceToStop(selectedKnowledge, roadbook.travelers.map((traveler) => traveler.id))
+    : null
+  const selectedDay = detailElement && detailElement.kind !== 'knowledge'
     ? roadbook.days.find((day) => day.id === detailElement.dayId)
     : null
-  const selectedStop = selectedDay?.stops.find((stop) => stop.id === detailElement?.stopId)
-  const selectedFrom = selectedDay?.stops.find((stop) => stop.id === detailElement?.fromStopId)
+  const selectedStop =
+    detailElement?.kind !== 'knowledge'
+      ? selectedDay?.stops.find((stop) => stop.id === detailElement?.stopId)
+      : null
+  const selectedFrom =
+    detailElement?.kind === 'leg'
+      ? selectedDay?.stops.find((stop) => stop.id === detailElement.fromStopId)
+      : null
 
   useEffect(() => {
     let cancelled = false
@@ -447,7 +512,7 @@ export function AmapCanvas({
     )
 
     roadbook.days.forEach((day, dayIndex) => {
-      if (day.id !== activeDayId) return
+      if (scope.mode !== 'global' && day.id !== activeDayId) return
       const stops = visibleStops(day)
 
       stops.forEach((stop, stopIndex) => {
@@ -459,14 +524,7 @@ export function AmapCanvas({
           (focusMode === 'scenic' && stop.type === 'scenic') ||
           (focusMode === 'hotel' && stop.type === 'hotel')
         const emphasizeMarker =
-          relevantStopIds.has(stop.id) &&
-          relevant &&
-          (scope.mode !== 'global' ||
-            (focusMode === 'overview'
-              ? stop.type === 'hotel' || stop.type === 'fuel'
-              : focusMode === 'driving'
-                ? stop.type === 'hotel' || stop.type === 'fuel'
-                : true))
+          scope.mode === 'global' || (relevantStopIds.has(stop.id) && relevant)
         const typeVisible =
           (stop.type !== 'scenic' || visibility.scenic) &&
           (stop.type !== 'hotel' || visibility.hotels)
@@ -480,6 +538,8 @@ export function AmapCanvas({
               photoUrl: placeLibraryEntry(roadbook, stop).photos[0]?.url,
               selected: selectedStopId === stop.id,
               dimmed: !emphasizeMarker,
+              showNumber: scope.mode !== 'global',
+              showLabel: scope.mode !== 'global' && emphasizeMarker,
               focusMode: focusMode === 'cost' && !visibility.costs ? 'overview' : focusMode,
             }),
             anchor: 'bottom-center',
@@ -495,7 +555,7 @@ export function AmapCanvas({
         }
 
         if (
-          day.id === activeDayId &&
+          (scope.mode === 'global' || day.id === activeDayId) &&
           relevantStopIds.has(stop.id) &&
           visibility.labels &&
           focusMode !== 'cost' &&
@@ -522,6 +582,38 @@ export function AmapCanvas({
       })
     })
 
+    if (visibility.knowledge && (focusMode === 'overview' || focusMode === 'scenic')) {
+      const scopeDayIndex =
+        scope.mode === 'global'
+          ? undefined
+          : roadbook.days.findIndex((day) => day.id === scope.dayId)
+      knowledgePlacesForScope(roadbook, scopeDayIndex).forEach((place) => {
+        if (isKnowledgePlaceSelected(place, roadbook)) return
+        const virtualStop = knowledgePlaceToStop(
+          place,
+          roadbook.travelers.map((traveler) => traveler.id),
+        )
+        const selectKnowledgePlace = () => {
+          setSelectedElement({ kind: 'knowledge', placeId: place.id })
+          setDismissedStopId(null)
+        }
+        const content = knowledgeMarkerElement(
+          place,
+          placeLibraryEntry(roadbook, virtualStop).photos[0]?.url,
+        )
+        content.addEventListener('click', selectKnowledgePlace)
+        const marker = new AMap.Marker({
+          position: place.location,
+          content,
+          anchor: 'bottom-center',
+          zIndex: place.isNiche ? 62 : 68,
+          title: place.name,
+        })
+        marker.on('click', selectKnowledgePlace)
+        marker.setMap(map)
+      })
+    }
+
     const drawRoutes = async () => {
       if (!visibility.routes) return
       const queue = [...globalGroups].sort(
@@ -534,10 +626,7 @@ export function AmapCanvas({
           if (!group) break
           const { dayId, dayIndex } = group
           const color = DAY_COLORS[dayIndex % DAY_COLORS.length]
-          const active =
-            scope.mode === 'global'
-              ? dayId === activeDayId
-              : relevantGroupIds.has(group.id)
+          const active = scope.mode === 'global' || relevantGroupIds.has(group.id)
           const cacheKey = group.stops.map((stop) => stop.location.join(',')).join('|')
           let route = routeCacheRef.current.get(cacheKey)
           if (route === undefined) {
@@ -603,16 +692,12 @@ export function AmapCanvas({
 
           if (visibility.distances) {
             if (scope.mode === 'global') {
-              if (dayId !== activeDayId) {
-                await new Promise((resolve) => window.setTimeout(resolve, 180))
-                continue
-              }
               const middle = path[Math.floor(path.length / 2)]
               const content = document.createElement('button')
               content.type = 'button'
               content.className = 'map-distance-label'
               content.style.setProperty('--route-color', color)
-              content.textContent = `D${dayIndex + 1} · ${route.distanceKm.toFixed(0)} km`
+              content.textContent = `第 ${dayIndex + 1} 天 · ${route.distanceKm.toFixed(0)} km`
               content.addEventListener('click', (event) => {
                 event.stopPropagation()
                 onScopeChange({ mode: 'day', dayId })
@@ -748,14 +833,16 @@ export function AmapCanvas({
     visibility.distances,
     visibility.fuel,
     visibility.hotels,
+    visibility.knowledge,
     visibility.labels,
     visibility.routes,
     visibility.scenic,
   ])
 
   const openSelectedInAmap = () => {
-    if (!selectedStop) return
-    window.open(buildAmapPlaceUrl(selectedStop), '_blank', 'noopener,noreferrer')
+    const place = selectedKnowledgeStop || selectedStop
+    if (!place) return
+    window.open(buildAmapPlaceUrl(place), '_blank', 'noopener,noreferrer')
   }
 
   const openNavigation = () => {
@@ -849,6 +936,7 @@ export function AmapCanvas({
                   ['routes', '导航曲线'],
                   ['distances', '路段公里数'],
                   ['scenic', '景点'],
+                  ['knowledge', '规划景点'],
                   ['hotels', '酒店'],
                   ['costs', '费用'],
                   ['fuel', '沿途加油站'],
@@ -869,7 +957,7 @@ export function AmapCanvas({
         </div>
         <button
           type="button"
-          disabled={!selectedStop}
+          disabled={!selectedStop && !selectedKnowledgeStop}
           onClick={openSelectedInAmap}
           title="在高德地图打开当前地点实景"
         >
@@ -882,6 +970,12 @@ export function AmapCanvas({
         <strong>{scopeLabel(roadbook, scope)}</strong>
         <span />
         驾车 <strong>{scopeDrivingDistance(roadbook, scope).toFixed(0)}</strong> 公里
+        {scope.mode === 'global' && knowledgePlaces.length ? (
+          <>
+            <span />
+            <strong>{knowledgePlaces.length}</strong> 个规划点
+          </>
+        ) : null}
         {focusMode === 'cost' ? (
           <>
             <span />
@@ -889,6 +983,30 @@ export function AmapCanvas({
           </>
         ) : null}
       </div>
+
+      {selectedKnowledge && selectedKnowledgeStop ? (
+        <aside className="map-detail-panel">
+          <button
+            type="button"
+            className="map-detail-close"
+            onClick={() => setSelectedElement(null)}
+            aria-label="关闭地图详情"
+          >
+            <X size={16} />
+          </button>
+          <KnowledgePlaceDetails
+            roadbook={roadbook}
+            place={selectedKnowledge}
+            stop={selectedKnowledgeStop}
+            selected={isKnowledgePlaceSelected(selectedKnowledge, roadbook)}
+            readOnly={readOnly}
+            onAddPhoto={onAddPlacePhoto}
+            onAddNote={onAddPlaceNote}
+            onAddPlace={onAddKnowledgePlace}
+            onOpenMap={openSelectedInAmap}
+          />
+        </aside>
+      ) : null}
 
       {detailElement && selectedStop && selectedDay ? (
         <aside className="map-detail-panel">

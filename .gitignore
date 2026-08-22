@@ -17,6 +17,7 @@ dist-ssr
 .dev.vars
 .wrangler
 /项目要求.md
+qinggan_kb/*脚本和数据/
 
 # Editor directories and files
 .vscode/*

@@ -7,6 +7,7 @@ import {
   hydratePlaceLibrary,
   loadRoadbooks,
   migrateRoadbookV6,
+  migrateRoadbookV10,
   normalizeRoadbook,
   parseSharedRoadbook,
   qingganRoadbook,
@@ -25,6 +26,10 @@ import {
 } from '@/lib/map-routes'
 import { gcj02ToBd09 } from '@/lib/baidu'
 import { placeLibraryKey } from '@/lib/place-media'
+import {
+  knowledgePlacesForRoadbook,
+  qingganKnowledgePlaces,
+} from '@/lib/qinggan-v10'
 
 const storage = new Map<string, string>()
 Object.defineProperty(globalThis, 'localStorage', {
@@ -120,7 +125,7 @@ describe('roadbook data helpers', () => {
     expect(migrated.days[0].stops[0].hidden).toBe(false)
   })
 
-  it('keeps the Qinghai-Gansu driving days within the planned limit', () => {
+  it('builds the 12-day knowledge-base itinerary within its documented limit', () => {
     const maximum = Math.max(
       ...qingganRoadbook.days.map((day) =>
         day.stops.reduce(
@@ -134,8 +139,9 @@ describe('roadbook data helpers', () => {
       ),
     )
 
-    expect(qingganRoadbook.days).toHaveLength(11)
-    expect(maximum).toBeLessThanOrEqual(500)
+    expect(qingganRoadbook.days).toHaveLength(12)
+    expect(maximum).toBeLessThanOrEqual(580)
+    expect(qingganRoadbook.dataVersion).toBe(10)
     expect(JSON.stringify(qingganRoadbook)).not.toContain('可可西里')
   })
 
@@ -161,38 +167,51 @@ describe('roadbook data helpers', () => {
     const names = groups.flatMap((group) => group.stops.map((stop) => stop.name))
 
     expect(names[0]).toBe('西宁曹家堡国际机场')
-    expect(names.at(-1)).toBe('西宁曹家堡国际机场')
-    expect(names).not.toContain('上海虹桥站')
-    expect(names).not.toContain('长沙黄花国际机场')
+    expect(names.at(-1)).toBe('桔子酒店·西宁城东万达广场店')
+    expect(names).not.toContain('上海虹桥国际机场')
+    expect(names).not.toContain('兰州中川国际机场')
     expect(groups.every((group) => group.stops.length >= 2)).toBe(true)
   })
 
   it('rejects implausible navigation detours instead of drawing a false route', () => {
     const returnGroup = globalDrivingGroups(qingganRoadbook).find(
-      (group) => group.dayId === 'qg-day-11',
+      (group) => group.dayId === 'qg-v10-day-8' && group.id.endsWith('-return'),
     )
 
     expect(returnGroup).toBeDefined()
-    expect(isPlausibleRouteDistance(returnGroup!, 405)).toBe(true)
-    expect(isPlausibleRouteDistance(returnGroup!, 1224.7)).toBe(false)
+    expect(isPlausibleRouteDistance(returnGroup!, 190)).toBe(true)
+    expect(isPlausibleRouteDistance(returnGroup!, 900)).toBe(false)
   })
 
   it('removes the legacy Kekexili day and moves following dates forward', () => {
     const legacy = structuredClone(qingganRoadbook)
+    legacy.dataVersion = undefined
     legacy.title = '青甘大环线 · 反向 12 日'
     legacy.summary += '，含可可西里保护站往返。'
-    legacy.days.splice(9, 0, {
-      id: 'qg-day-10',
-      date: '2026-10-04',
-      title: '可可西里保护站往返',
-      stops: [],
-    })
-    legacy.days[10].date = '2026-10-05'
-    legacy.days[11].date = '2026-10-06'
+    legacy.days = [
+      {
+        id: 'qg-day-10',
+        date: '2026-10-04',
+        title: '可可西里保护站往返',
+        stops: [],
+      },
+      {
+        id: 'qg-day-11',
+        date: '2026-10-05',
+        title: '茶卡盐湖',
+        stops: [],
+      },
+      {
+        id: 'qg-day-12',
+        date: '2026-10-06',
+        title: '返回西宁',
+        stops: [],
+      },
+    ]
 
     const migrated = migrateRoadbookV6(legacy)
 
-    expect(migrated.days).toHaveLength(11)
+    expect(migrated.days).toHaveLength(2)
     expect(migrated.days.some((day) => day.id === 'qg-day-10')).toBe(false)
     expect(migrated.days.find((day) => day.id === 'qg-day-11')?.date).toBe('2026-10-04')
     expect(migrated.endDate).toBe('2026-10-05')
@@ -226,30 +245,55 @@ describe('roadbook data helpers', () => {
   })
 
   it('limits day and leg scopes to their ordered driving stops', () => {
-    const dayScope = { mode: 'day' as const, dayId: 'qg-day-2' }
+    const dayScope = { mode: 'day' as const, dayId: 'qg-v10-day-2' }
     const dayGroups = routeGroupsForScope(qingganRoadbook, dayScope)
     const legScope = {
       mode: 'leg' as const,
-      dayId: 'qg-day-2',
-      fromStopId: 'qg-xining-start',
-      stopId: 'qg-menyuan',
+      dayId: 'qg-v10-day-2',
+      fromStopId: 'v10-d2-hotel-start',
+      stopId: 'v10-d2-heiquan',
     }
     const legGroups = routeGroupsForScope(qingganRoadbook, legScope)
 
     expect(dayGroups).toHaveLength(1)
-    expect(dayGroups[0].stops.map((stop) => stop.id)).toEqual([
-      'qg-xining-start',
-      'qg-menyuan',
-      'qg-zhuoer',
-      'qg-qilian-hotel',
-    ])
+    expect(dayGroups[0].stops).toHaveLength(7)
     expect(legGroups[0].stops.map((stop) => stop.id)).toEqual([
-      'qg-xining-start',
-      'qg-menyuan',
+      'v10-d2-hotel-start',
+      'v10-d2-heiquan',
     ])
     expect(markerEntriesForScope(qingganRoadbook, dayScope).some((entry) => entry.relevant)).toBe(
       true,
     )
+  })
+
+  it('exposes all knowledge-base places with usable map coordinates', () => {
+    expect(qingganKnowledgePlaces).toHaveLength(78)
+    expect(knowledgePlacesForRoadbook(qingganRoadbook)).toHaveLength(78)
+    expect(
+      qingganKnowledgePlaces.every(
+        (place) => Number.isFinite(place.location[0]) && Number.isFinite(place.location[1]),
+      ),
+    ).toBe(true)
+  })
+
+  it('upgrades the local Qinghai-Gansu roadbook while preserving user media', () => {
+    const legacy = structuredClone(qingganRoadbook)
+    legacy.dataVersion = 6
+    legacy.days = legacy.days.slice(0, 2)
+    const key = Object.keys(legacy.placeLibrary)[0]
+    legacy.placeLibrary[key].photos.push({
+      id: 'user-photo',
+      url: 'data:image/jpeg;base64,user',
+      caption: '用户照片',
+      source: 'upload',
+      createdAt: '2026-08-22T00:00:00.000Z',
+    })
+
+    const migrated = migrateRoadbookV10(legacy)
+
+    expect(migrated.dataVersion).toBe(10)
+    expect(migrated.days).toHaveLength(12)
+    expect(migrated.placeLibrary[key].photos.some((photo) => photo.id === 'user-photo')).toBe(true)
   })
 
   it('converts GCJ-02 coordinates for Baidu without mutating source data', () => {
