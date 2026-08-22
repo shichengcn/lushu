@@ -4,7 +4,7 @@
 
 - GitHub：`git@github-personal:shichengcn/lushu`
 - Cloudflare Pages 项目：`lushu`
-- Pages 默认域名：`https://lushu.pages.dev`
+- Pages 默认域名：`https://lushu-dk3.pages.dev`
 - 自定义域名：`https://shicheng.qd.je`
 
 地图凭据保存在 `.env.local`，本机路书数据库保存在
@@ -93,7 +93,7 @@ shicheng.qd.je
 ```text
 类型：CNAME
 主机记录：shicheng
-目标：lushu.pages.dev
+目标：lushu-dk3.pages.dev
 ```
 
 如果平台专门管理 `shicheng.qd.je` 这个二级域名，主机记录可能要求填写
@@ -120,7 +120,7 @@ shicheng.qd.je*
 
 ```text
 shicheng.qd.je
-lushu.pages.dev
+lushu-dk3.pages.dev
 ```
 
 生产发布后若地图底图正常但路线或地点搜索失败，优先检查这两个平台的域名
