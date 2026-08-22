@@ -1,4 +1,4 @@
-import { Check, ExternalLink, Plus } from 'lucide-react'
+import { BookOpen, Check, ExternalLink, PlayCircle, Plus } from 'lucide-react'
 import { PlaceMediaGallery } from '@/components/PlaceMediaGallery'
 import type { KnowledgePlace, Roadbook, TripStop } from '@/types'
 
@@ -16,6 +16,42 @@ interface KnowledgePlaceDetailsProps {
 
 function displayPrice(value: string) {
   return value ? `¥${value}` : '待确认'
+}
+
+export function KnowledgeReferencePanel({ place }: { place: KnowledgePlace }) {
+  return (
+    <>
+      {place.travelogue ? (
+        <section className="knowledge-place-travelogue">
+          <h4>游记与实走评价</h4>
+          <p>{place.travelogue}</p>
+        </section>
+      ) : null}
+      {place.references.length ? (
+        <section className="knowledge-place-references">
+          <h4>参考资料</h4>
+          <div>
+            {place.references.map((reference) => (
+              <a
+                key={reference.url}
+                href={reference.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {reference.type === 'video' ? (
+                  <PlayCircle size={13} />
+                ) : (
+                  <BookOpen size={13} />
+                )}
+                <span>{reference.title}</span>
+                <ExternalLink size={11} />
+              </a>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </>
+  )
 }
 
 export function KnowledgePlaceDetails({
@@ -64,6 +100,12 @@ export function KnowledgePlaceDetails({
           <dt>拍摄</dt>
           <dd>{place.bestTime || '知识库未覆盖'}</dd>
         </div>
+        {place.photoTips ? (
+          <div>
+            <dt>机位</dt>
+            <dd>{place.photoTips}</dd>
+          </div>
+        ) : null}
         <div>
           <dt>道路</dt>
           <dd>{place.roadRequirement || '知识库未覆盖'}</dd>
@@ -79,6 +121,8 @@ export function KnowledgePlaceDetails({
           </div>
         ) : null}
       </dl>
+
+      <KnowledgeReferencePanel place={place} />
 
       <PlaceMediaGallery
         roadbook={roadbook}

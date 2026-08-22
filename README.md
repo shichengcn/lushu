@@ -32,10 +32,11 @@ pnpm dev
 固定访问 `http://127.0.0.1:4173/`，避免端口或主机名变化后进入另一份浏览器
 存储。
 
-地图凭据只从本机 `.env.local` 读取：
+地图凭据按运行模式从本机文件读取：
 
 ```bash
-cp .env.example .env.local
+cp .env.example .env.development.local
+cp .env.example .env.production.local
 ```
 
 ```dotenv
@@ -44,7 +45,10 @@ VITE_AMAP_SECURITY_CODE=your_amap_security_code
 VITE_BAIDU_MAP_KEY=your_baidu_browser_ak
 ```
 
-`.env.local` 已被 Git 忽略，不得提交或上传；仓库内不包含可用的地图凭据。
+- `pnpm dev` 使用 `.env.development.local` 中的本地测试 Key。
+- `pnpm build`、`pnpm export:local` 和 `pnpm deploy` 使用
+  `.env.production.local` 中的线上域名 Key。
+- 两个文件均被 Git 忽略，不得提交或上传；仓库内不包含可用地图凭据。
 
 ## 检查
 

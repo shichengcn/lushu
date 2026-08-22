@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "data:qinggan": "node scripts/enrich-qinggan-references.mjs",
     "export:local": "node scripts/export-local.mjs",
     "deploy": "node scripts/deploy.mjs",
     "lint": "oxlint src/App.tsx src/main.tsx src/types.ts src/lib src/hooks/use-roadbook-controller.ts src/components/AmapCanvas.tsx src/components/BaiduMapCanvas.tsx src/components/MapCanvas.tsx src/components/AnalyticsDashboard.tsx src/components/ItineraryPanel.tsx src/components/KnowledgePlaceDetails.tsx src/components/PlaceEditorDialog.tsx src/components/PlaceMediaGallery.tsx src/components/ShareDialog.tsx src/components/TripLibraryDialog.tsx",

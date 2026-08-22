@@ -509,6 +509,22 @@ export function migrateRoadbookV10(roadbook: Roadbook): Roadbook {
   }
 }
 
+export function migrateRoadbookV11(roadbook: Roadbook): Roadbook {
+  if (
+    roadbook.id !== QINGGAN_V10_ROADBOOK_ID ||
+    (roadbook.dataVersion || 0) >= 11
+  ) {
+    return roadbook
+  }
+  const next = buildQingganV10Roadbook()
+  return {
+    ...next,
+    placeLibrary: mergeQingganV10Library(next.placeLibrary, roadbook.placeLibrary),
+    createdAt: roadbook.createdAt,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
 export function hydratePlaceLibrary(roadbook: Roadbook): Roadbook {
   const placeLibrary = roadbook.days
     .flatMap((day) => day.stops)
@@ -538,7 +554,9 @@ export function loadRoadbooks(): Roadbook[] {
       if (!Array.isArray(parsed) || !parsed.length) continue
       const normalized = parsed.map((roadbook) =>
         hydratePlaceLibrary(
-          migrateRoadbookV10(migrateRoadbookV6(normalizeRoadbook(roadbook))),
+          migrateRoadbookV11(
+            migrateRoadbookV10(migrateRoadbookV6(normalizeRoadbook(roadbook))),
+          ),
         ),
       )
       if (!normalized.some((roadbook) => roadbook.id === qingganRoadbook.id)) {
@@ -776,7 +794,7 @@ export function serializeRoadbookForShare(roadbook: Roadbook) {
         key,
         {
           ...entry,
-          photos: entry.photos.filter((photo) => photo.source === 'generated'),
+          photos: entry.photos.filter((photo) => photo.source !== 'upload'),
           notes: entry.notes.map(({ imageDataUrl: _image, ...note }) => note),
         },
       ]),

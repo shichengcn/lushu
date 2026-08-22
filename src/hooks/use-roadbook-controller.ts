@@ -15,6 +15,7 @@ import {
   loadRoadbooks,
   migrateRoadbookV6,
   migrateRoadbookV10,
+  migrateRoadbookV11,
   normalizeRoadbook,
   parseSharedRoadbook,
   recalculateDayDates,
@@ -139,7 +140,9 @@ export function useRoadbookController() {
       if (databaseWins) {
         const restored = snapshot.roadbooks.map((roadbook) =>
           hydratePlaceLibrary(
-            migrateRoadbookV10(migrateRoadbookV6(normalizeRoadbook(roadbook))),
+            migrateRoadbookV11(
+              migrateRoadbookV10(migrateRoadbookV6(normalizeRoadbook(roadbook))),
+            ),
           ),
         )
         setRoadbooks(restored)

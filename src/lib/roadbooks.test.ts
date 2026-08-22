@@ -7,7 +7,7 @@ import {
   hydratePlaceLibrary,
   loadRoadbooks,
   migrateRoadbookV6,
-  migrateRoadbookV10,
+  migrateRoadbookV11,
   normalizeRoadbook,
   parseSharedRoadbook,
   qingganRoadbook,
@@ -141,7 +141,7 @@ describe('roadbook data helpers', () => {
 
     expect(qingganRoadbook.days).toHaveLength(12)
     expect(maximum).toBeLessThanOrEqual(580)
-    expect(qingganRoadbook.dataVersion).toBe(10)
+    expect(qingganRoadbook.dataVersion).toBe(11)
     expect(JSON.stringify(qingganRoadbook)).not.toContain('可可西里')
   })
 
@@ -225,7 +225,7 @@ describe('roadbook data helpers', () => {
 
     hydrated.days[0].stops.shift()
 
-    expect(hydrated.placeLibrary[key]?.photos).toHaveLength(2)
+    expect(hydrated.placeLibrary[key]?.photos).toHaveLength(4)
     expect(hydrated.placeLibrary[key]?.name).toBe(stop.name)
   })
 
@@ -274,11 +274,26 @@ describe('roadbook data helpers', () => {
         (place) => Number.isFinite(place.location[0]) && Number.isFinite(place.location[1]),
       ),
     ).toBe(true)
+    expect(qingganKnowledgePlaces.every((place) => place.references.length >= 3)).toBe(true)
+    expect(
+      qingganKnowledgePlaces.every((place) =>
+        place.references.some((reference) => reference.type === 'video'),
+      ),
+    ).toBe(true)
+  })
+
+  it('provides at least four gallery images for every knowledge-base place', () => {
+    expect(
+      qingganKnowledgePlaces.every((place) => {
+        const entry = qingganRoadbook.placeLibrary[placeLibraryKey({ name: place.name })]
+        return entry?.photos.length >= 4
+      }),
+    ).toBe(true)
   })
 
   it('upgrades the local Qinghai-Gansu roadbook while preserving user media', () => {
     const legacy = structuredClone(qingganRoadbook)
-    legacy.dataVersion = 6
+    legacy.dataVersion = 10
     legacy.days = legacy.days.slice(0, 2)
     const key = Object.keys(legacy.placeLibrary)[0]
     legacy.placeLibrary[key].photos.push({
@@ -289,10 +304,11 @@ describe('roadbook data helpers', () => {
       createdAt: '2026-08-22T00:00:00.000Z',
     })
 
-    const migrated = migrateRoadbookV10(legacy)
+    const migrated = migrateRoadbookV11(legacy)
 
-    expect(migrated.dataVersion).toBe(10)
+    expect(migrated.dataVersion).toBe(11)
     expect(migrated.days).toHaveLength(12)
+    expect(migrated.placeLibrary[key].photos.length).toBeGreaterThanOrEqual(5)
     expect(migrated.placeLibrary[key].photos.some((photo) => photo.id === 'user-photo')).toBe(true)
   })
 

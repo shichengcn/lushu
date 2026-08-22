@@ -32,29 +32,32 @@ function output(program, commandArgs, options = {}) {
 }
 
 function requireLocalConfiguration() {
-  if (!existsSync('.env.local')) {
-    throw new Error('缺少 .env.local，地图凭据未配置')
+  const envFiles = ['.env.development.local', '.env.production.local']
+  if (envFiles.some((file) => !existsSync(file))) {
+    throw new Error('缺少开发或生产环境的本机地图凭据文件')
   }
   if (!existsSync('.local-data/roadbooks.json')) {
     throw new Error('缺少 .local-data/roadbooks.json，请先运行 pnpm dev 并保存路书')
   }
-  const ignored = command('git', ['check-ignore', '-q', '.env.local'], {
-    capture: true,
-    allowFailure: true,
-  })
-  if (ignored.status !== 0) {
-    throw new Error('.env.local 未被 Git 忽略，已停止部署')
+  for (const envFile of envFiles) {
+    const ignored = command('git', ['check-ignore', '-q', envFile], {
+      capture: true,
+      allowFailure: true,
+    })
+    if (ignored.status !== 0) {
+      throw new Error(`${envFile} 未被 Git 忽略，已停止部署`)
+    }
   }
 }
 
 function verifyStagedSecrets() {
-  const envValues = readFileSync('.env.local', 'utf8')
-    .split(/\r?\n/)
+  const envValues = ['.env.development.local', '.env.production.local']
+    .flatMap((file) => readFileSync(file, 'utf8').split(/\r?\n/))
     .map((line) => line.match(/^[^#=]+=(.+)$/)?.[1]?.trim())
     .filter((value) => value && value.length >= 12)
   const staged = output('git', ['diff', '--cached', '--no-ext-diff', '--unified=0'])
   if (envValues.some((secret) => staged.includes(secret))) {
-    throw new Error('暂存区包含 .env.local 中的凭据，已停止 Git 推送')
+    throw new Error('暂存区包含本机环境文件中的凭据，已停止 Git 推送')
   }
 }
 

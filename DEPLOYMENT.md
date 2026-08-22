@@ -5,10 +5,11 @@
 - GitHub：`git@github-personal:shichengcn/lushu`
 - Cloudflare Pages 项目：`lushu`
 - Pages 默认域名：`https://lushu-dk3.pages.dev`
-- 自定义域名：`https://shicheng.qd.je`
+- 自定义域名：`https://www.shicheng.qd.je`
 
-地图凭据保存在 `.env.local`，本机路书数据库保存在
-`.local-data/roadbooks.json`。两者均被 Git 忽略，不会推送到 GitHub。
+本地测试凭据保存在 `.env.development.local`，线上域名凭据保存在
+`.env.production.local`，本机路书数据库保存在 `.local-data/roadbooks.json`。
+这些文件均被 Git 忽略，不会推送到 GitHub。
 构建后的地图凭据会进入 `dist` 浏览器代码，因此只应把 `dist` 部署到
 受地图控制台 Referer 白名单约束的域名。
 
@@ -44,7 +45,7 @@ pnpm deploy
 
 脚本会依次执行：
 
-1. 检查 `.env.local` 与 `.local-data/roadbooks.json`。
+1. 检查开发、生产环境凭据与 `.local-data/roadbooks.json`。
 2. 运行 `pnpm lint` 和 `pnpm test`。
 3. 运行 `pnpm export:local`，重新构建并把本机数据库写入 `dist/data`。
 4. 暂存并检查 Git 变更，阻止 `.env.local` 凭据进入提交。
@@ -85,26 +86,26 @@ pnpm deploy -- --dry-run
 填写：
 
 ```text
-shicheng.qd.je
+www.shicheng.qd.je
 ```
 
 然后在 `qd.je` 的 DNS 管理平台添加：
 
 ```text
 类型：CNAME
-主机记录：shicheng
+主机记录：www.shicheng
 目标：lushu-dk3.pages.dev
 ```
 
-如果平台专门管理 `shicheng.qd.je` 这个二级域名，主机记录可能要求填写
+如果平台专门管理 `www.shicheng.qd.je` 这个三级域名，主机记录可能要求填写
 `@`；以平台提示为准。DNS 生效后回到 Cloudflare 验证，等待 HTTPS 状态变为
 `Active`。
 
 可在终端检查：
 
 ```bash
-dig +short shicheng.qd.je CNAME
-curl -I https://shicheng.qd.je
+dig +short www.shicheng.qd.je CNAME
+curl -I https://www.shicheng.qd.je
 ```
 
 ## 地图域名白名单
@@ -112,14 +113,14 @@ curl -I https://shicheng.qd.je
 上线后在百度地图控制台把浏览器端 AK 的 Referer 白名单加入：
 
 ```text
-shicheng.qd.je*
+www.shicheng.qd.je*
 *.pages.dev*
 ```
 
 高德开放平台的 Web 端 Key 同样需要允许：
 
 ```text
-shicheng.qd.je
+www.shicheng.qd.je
 lushu-dk3.pages.dev
 ```
 

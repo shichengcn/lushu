@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { ImagePlus, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ImagePlus, Plus } from 'lucide-react'
 import { placeLibraryEntry } from '@/lib/place-media'
 import type { PlacePhoto, Roadbook, TripStop } from '@/types'
 
@@ -12,7 +12,7 @@ interface PlaceMediaGalleryProps {
 }
 
 export function PlaceThumbnail({ photo }: { photo: PlacePhoto }) {
-  const [visible, setVisible] = useState(photo.source === 'upload')
+  const [visible, setVisible] = useState(photo.source !== 'generated')
   return (
     <img
       src={photo.url}
@@ -21,14 +21,21 @@ export function PlaceThumbnail({ photo }: { photo: PlacePhoto }) {
       loading="lazy"
       onLoad={(event) => {
         const image = event.currentTarget
-        setVisible(photo.source === 'upload' || image.naturalWidth !== image.naturalHeight)
+        setVisible(photo.source !== 'generated' || image.naturalWidth !== image.naturalHeight)
       }}
+      onError={() => setVisible(false)}
     />
   )
 }
 
-function PlacePhotoFigure({ photo }: { photo: PlacePhoto }) {
-  const [visible, setVisible] = useState(photo.source === 'upload')
+function PlacePhotoFigure({
+  photo,
+  onUnavailable,
+}: {
+  photo: PlacePhoto
+  onUnavailable: (photoId: string) => void
+}) {
+  const [visible, setVisible] = useState(photo.source !== 'generated')
   return (
     <figure hidden={!visible}>
       <img
@@ -37,8 +44,12 @@ function PlacePhotoFigure({ photo }: { photo: PlacePhoto }) {
         loading="lazy"
         onLoad={(event) => {
           const image = event.currentTarget
-          setVisible(photo.source === 'upload' || image.naturalWidth !== image.naturalHeight)
+          const available =
+            photo.source !== 'generated' || image.naturalWidth !== image.naturalHeight
+          setVisible(available)
+          if (!available) onUnavailable(photo.id)
         }}
+        onError={() => onUnavailable(photo.id)}
       />
       <figcaption>{photo.caption}</figcaption>
     </figure>
@@ -54,8 +65,26 @@ export function PlaceMediaGallery({
 }: PlaceMediaGalleryProps) {
   const entry = placeLibraryEntry(roadbook, stop)
   const inputRef = useRef<HTMLInputElement>(null)
+  const touchStartRef = useRef<number | null>(null)
   const [note, setNote] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [activePhotoIndex, setActivePhotoIndex] = useState(0)
+  const [unavailablePhotoIds, setUnavailablePhotoIds] = useState<string[]>([])
+  const photos = entry.photos.filter((photo) => !unavailablePhotoIds.includes(photo.id))
+  const currentPhotoIndex = Math.min(activePhotoIndex, Math.max(0, photos.length - 1))
+  const activePhoto = photos[currentPhotoIndex]
+
+  const movePhoto = (direction: -1 | 1) => {
+    if (photos.length < 2) return
+    setActivePhotoIndex((current) => (current + direction + photos.length) % photos.length)
+  }
+
+  const markUnavailable = (photoId: string) => {
+    setUnavailablePhotoIds((current) =>
+      current.includes(photoId) ? current : [...current, photoId],
+    )
+    setActivePhotoIndex(0)
+  }
 
   const upload = async (file?: File) => {
     if (!file) return
@@ -76,22 +105,77 @@ export function PlaceMediaGallery({
 
   return (
     <div className="place-media-library">
-      <div className="place-photo-grid">
-        {entry.photos.map((photo) => (
-          <PlacePhotoFigure key={photo.id} photo={photo} />
-        ))}
-        {!readOnly ? (
-          <button
-            type="button"
-            className="place-photo-add"
-            onClick={() => inputRef.current?.click()}
-            disabled={uploading}
-          >
-            <ImagePlus size={20} />
-            {uploading ? '处理中' : '添加照片'}
-          </button>
+      <div
+        className="place-photo-carousel"
+        onTouchStart={(event) => {
+          touchStartRef.current = event.touches[0]?.clientX ?? null
+        }}
+        onTouchEnd={(event) => {
+          if (touchStartRef.current === null) return
+          const distance = event.changedTouches[0]?.clientX - touchStartRef.current
+          touchStartRef.current = null
+          if (Math.abs(distance) < 36) return
+          movePhoto(distance > 0 ? -1 : 1)
+        }}
+      >
+        {activePhoto ? (
+          <PlacePhotoFigure photo={activePhoto} onUnavailable={markUnavailable} />
+        ) : (
+          <div className="place-photo-empty">
+            <ImagePlus size={22} />
+            暂无可用图片
+          </div>
+        )}
+        {photos.length > 1 ? (
+          <>
+            <button
+              type="button"
+              className="place-photo-previous"
+              onClick={() => movePhoto(-1)}
+              title="上一张"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <button
+              type="button"
+              className="place-photo-next"
+              onClick={() => movePhoto(1)}
+              title="下一张"
+            >
+              <ChevronRight size={18} />
+            </button>
+            <span className="place-photo-counter">
+              {currentPhotoIndex + 1} / {photos.length}
+            </span>
+          </>
         ) : null}
       </div>
+      {photos.length > 1 ? (
+        <div className="place-photo-thumbnails">
+          {photos.map((photo, index) => (
+            <button
+              type="button"
+              className={index === currentPhotoIndex ? 'is-active' : ''}
+              key={photo.id}
+              onClick={() => setActivePhotoIndex(index)}
+              title={photo.caption}
+            >
+              <PlaceThumbnail photo={photo} />
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {!readOnly ? (
+        <button
+          type="button"
+          className="place-photo-add"
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+        >
+          <ImagePlus size={20} />
+          {uploading ? '处理中' : '添加照片'}
+        </button>
+      ) : null}
       <input
         ref={inputRef}
         type="file"

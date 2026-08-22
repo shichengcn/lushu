@@ -55,7 +55,7 @@ export interface PlacePhoto {
   id: string
   url: string
   caption: string
-  source: 'generated' | 'upload'
+  source: 'generated' | 'reference' | 'upload'
   createdAt: string
 }
 
@@ -66,6 +66,12 @@ export interface PlaceLibraryEntry {
   photos: PlacePhoto[]
   notes: TripNote[]
   updatedAt: string
+}
+
+export interface KnowledgeReference {
+  title: string
+  url: string
+  type: 'article' | 'guide' | 'video'
 }
 
 export interface KnowledgePlace {
@@ -87,8 +93,12 @@ export interface KnowledgePlace {
   suggestedDay: string
   detourNote: string
   summary: string
+  travelogue: string
+  photoTips: string
   openTime: string
   refUrl: string
+  images: Array<{ caption: string; url: string }>
+  references: KnowledgeReference[]
   address: string
   location: [number, number]
 }

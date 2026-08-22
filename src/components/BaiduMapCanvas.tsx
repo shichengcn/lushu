@@ -8,13 +8,18 @@ import {
   LocateFixed,
   Map as MapIcon,
   MapPinned,
+  Maximize2,
+  Minimize2,
   Navigation,
   Ruler,
   Satellite,
   TrafficCone,
   X,
 } from 'lucide-react'
-import { KnowledgePlaceDetails } from '@/components/KnowledgePlaceDetails'
+import {
+  KnowledgePlaceDetails,
+  KnowledgeReferencePanel,
+} from '@/components/KnowledgePlaceDetails'
 import { PlaceMediaGallery } from '@/components/PlaceMediaGallery'
 import {
   buildBaiduNavigationUrl,
@@ -41,6 +46,7 @@ import {
 import { placeLibraryEntry } from '@/lib/place-media'
 import {
   isKnowledgePlaceSelected,
+  knowledgePlaceForStop,
   knowledgePlacesForScope,
   knowledgePlaceToStop,
 } from '@/lib/qinggan-v10'
@@ -208,6 +214,7 @@ export function BaiduMapCanvas({
   const [measurePointCount, setMeasurePointCount] = useState(0)
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null)
   const [dismissedStopId, setDismissedStopId] = useState<string | null>(null)
+  const [detailExpanded, setDetailExpanded] = useState(false)
   const knowledgePlaces = useMemo(() => knowledgePlacesForScope(roadbook), [roadbook])
   const externalSelectedDay = selectedStopId
     ? roadbook.days.find((day) => day.stops.some((stop) => stop.id === selectedStopId))
@@ -238,6 +245,9 @@ export function BaiduMapCanvas({
     detailElement?.kind === 'leg'
       ? selectedDay?.stops.find((stop) => stop.id === detailElement.fromStopId)
       : null
+  const selectedStopKnowledge = selectedStop
+    ? knowledgePlaceForStop(selectedStop)
+    : undefined
   const markerEntries = useMemo(
     () => markerEntriesForScope(roadbook, scope),
     [roadbook, scope],
@@ -281,20 +291,45 @@ export function BaiduMapCanvas({
     const map = mapRef.current
     const container = containerRef.current
     if (!mapReady || !BMapGL || !map || !container) return
-    const handler = (event: MouseEvent) => {
-      if (!measuring) return
-      const bounds = container.getBoundingClientRect()
-      const point = map.pixelToPoint(
-        new BMapGL.Pixel(event.clientX - bounds.left, event.clientY - bounds.top),
-      )
-      measurePointsRef.current.push(point)
-      setMeasurePointCount(measurePointsRef.current.length)
+
+    const clearMeasurementOverlays = () => {
+      measureOverlaysRef.current.forEach((overlay) => map.removeOverlay?.(overlay))
+      measureOverlaysRef.current = []
+    }
+
+    const renderMeasurement = () => {
+      clearMeasurementOverlays()
       const points = measurePointsRef.current
-      const marker = new BMapGL.Marker(point)
-      map.addOverlay(marker)
-      measureOverlaysRef.current.push(marker)
-      if (points.length > 1) {
-        const segment = [points.at(-2), points.at(-1)]
+      let totalDistance = 0
+
+      points.forEach((point, index) => {
+        const marker = new BMapGL.Marker(point)
+        map.addOverlay(marker)
+        measureOverlaysRef.current.push(marker)
+
+        const deleteLabel = new BMapGL.Label(
+          '<button type="button" class="baidu-measure-delete" aria-label="删除测量点">×</button>',
+          {
+            position: point,
+            offset: new BMapGL.Size(10, -34),
+          },
+        )
+        deleteLabel.setStyle({
+          border: '0',
+          background: 'transparent',
+          padding: '0',
+        })
+        deleteLabel.addEventListener('click', (event: any) => {
+          event?.domEvent?.preventDefault?.()
+          event?.domEvent?.stopPropagation?.()
+          measurePointsRef.current.splice(index, 1)
+          renderMeasurement()
+        })
+        map.addOverlay(deleteLabel)
+        measureOverlaysRef.current.push(deleteLabel)
+
+        if (index === 0) return
+        const segment = [points[index - 1], point]
         const line = new BMapGL.Polyline(segment, {
           strokeColor: '#172c36',
           strokeWeight: 3,
@@ -302,10 +337,11 @@ export function BaiduMapCanvas({
           strokeStyle: 'dashed',
         })
         map.addOverlay(line)
+        measureOverlaysRef.current.push(line)
         const distance = map.getDistance(segment[0], segment[1])
-        setMeasuredDistance((current) => current + distance)
+        totalDistance += distance
         const label = new BMapGL.Label(`${(distance / 1000).toFixed(2)} km`, {
-          position: segment[1],
+          position: point,
           offset: new BMapGL.Size(8, -10),
         })
         label.setStyle({
@@ -316,8 +352,22 @@ export function BaiduMapCanvas({
           color: '#172c36',
         })
         map.addOverlay(label)
-        measureOverlaysRef.current.push(line, label)
-      }
+        measureOverlaysRef.current.push(label)
+      })
+
+      setMeasurePointCount(points.length)
+      setMeasuredDistance(totalDistance)
+    }
+
+    const handler = (event: MouseEvent) => {
+      if (!measuring) return
+      if ((event.target as Element | null)?.closest?.('.baidu-measure-delete')) return
+      const bounds = container.getBoundingClientRect()
+      const point = map.pixelToPoint(
+        new BMapGL.Pixel(event.clientX - bounds.left, event.clientY - bounds.top),
+      )
+      measurePointsRef.current.push(point)
+      renderMeasurement()
     }
     container.addEventListener('click', handler, true)
     return () => container.removeEventListener('click', handler, true)
@@ -349,19 +399,24 @@ export function BaiduMapCanvas({
       const [lng, lat] = gcj02ToBd09(stop.location)
       const point = new BMapGL.Point(lng, lat)
       const marker = new BMapGL.Marker(point)
-      const photoUrl = placeLibraryEntry(roadbook, stop).photos[0]?.url
-      if (photoUrl) {
+      const photo = placeLibraryEntry(roadbook, stop).photos[0]
+      if (photo) {
         const preview = new Image()
         preview.onload = () => {
-          if (preview.naturalWidth === preview.naturalHeight) return
+          if (
+            photo.source === 'generated' &&
+            preview.naturalWidth === preview.naturalHeight
+          ) {
+            return
+          }
           marker.setIcon(
-            new BMapGL.Icon(photoUrl, new BMapGL.Size(46, 46), {
+            new BMapGL.Icon(photo.url, new BMapGL.Size(46, 46), {
               anchor: new BMapGL.Size(23, 46),
               imageSize: new BMapGL.Size(46, 46),
             }),
           )
         }
-        preview.src = photoUrl
+        preview.src = photo.url
       }
       marker.setTitle(stop.name)
       marker.addEventListener('click', () => {
@@ -459,19 +514,24 @@ export function BaiduMapCanvas({
           place,
           roadbook.travelers.map((traveler) => traveler.id),
         )
-        const photoUrl = placeLibraryEntry(roadbook, virtualStop).photos[0]?.url
-        if (photoUrl) {
+        const photo = placeLibraryEntry(roadbook, virtualStop).photos[0]
+        if (photo) {
           const preview = new Image()
           preview.onload = () => {
-            if (preview.naturalWidth === preview.naturalHeight) return
+            if (
+              photo.source === 'generated' &&
+              preview.naturalWidth === preview.naturalHeight
+            ) {
+              return
+            }
             marker.setIcon(
-              new BMapGL.Icon(photoUrl, new BMapGL.Size(34, 34), {
+              new BMapGL.Icon(photo.url, new BMapGL.Size(34, 34), {
                 anchor: new BMapGL.Size(17, 34),
                 imageSize: new BMapGL.Size(34, 34),
               }),
             )
           }
-          preview.src = photoUrl
+          preview.src = photo.url
         }
         marker.addEventListener('click', () => {
           setSelectedElement({ kind: 'knowledge', placeId: place.id })
@@ -790,11 +850,22 @@ export function BaiduMapCanvas({
       </div>
 
       {selectedKnowledge && selectedKnowledgeStop ? (
-        <aside className="map-detail-panel">
+        <aside className={`map-detail-panel${detailExpanded ? ' is-expanded' : ''}`}>
+          <button
+            type="button"
+            className="map-detail-expand"
+            onClick={() => setDetailExpanded((current) => !current)}
+            title={detailExpanded ? '缩小详情' : '放大详情'}
+          >
+            {detailExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
           <button
             type="button"
             className="map-detail-close"
-            onClick={() => setSelectedElement(null)}
+            onClick={() => {
+              setSelectedElement(null)
+              setDetailExpanded(false)
+            }}
             aria-label="关闭地图详情"
           >
             <X size={16} />
@@ -814,13 +885,22 @@ export function BaiduMapCanvas({
       ) : null}
 
       {detailElement && selectedStop && selectedDay ? (
-        <aside className="map-detail-panel">
+        <aside className={`map-detail-panel${detailExpanded ? ' is-expanded' : ''}`}>
+          <button
+            type="button"
+            className="map-detail-expand"
+            onClick={() => setDetailExpanded((current) => !current)}
+            title={detailExpanded ? '缩小详情' : '放大详情'}
+          >
+            {detailExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
           <button
             type="button"
             className="map-detail-close"
             onClick={() => {
               setSelectedElement(null)
               setDismissedStopId(selectedStop.id)
+              setDetailExpanded(false)
             }}
             aria-label="关闭地图详情"
           >
@@ -844,6 +924,9 @@ export function BaiduMapCanvas({
                 onAddPhoto={onAddPlacePhoto}
                 onAddNote={onAddPlaceNote}
               />
+              {selectedStopKnowledge ? (
+                <KnowledgeReferencePanel place={selectedStopKnowledge} />
+              ) : null}
               <div className="map-detail-metrics">
                 <span>
                   <strong>{selectedStop.legFromPrevious?.distanceKm.toFixed(1)}</strong> km
@@ -869,6 +952,9 @@ export function BaiduMapCanvas({
                 onAddPhoto={onAddPlacePhoto}
                 onAddNote={onAddPlaceNote}
               />
+              {selectedStopKnowledge ? (
+                <KnowledgeReferencePanel place={selectedStopKnowledge} />
+              ) : null}
               <div className="map-detail-metrics">
                 <span>
                   <strong>{selectedStop.arrivalTime}</strong> 到达

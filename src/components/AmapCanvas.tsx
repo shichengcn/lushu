@@ -10,6 +10,8 @@ import {
   LocateFixed,
   Map as MapIcon,
   MapPinned,
+  Maximize2,
+  Minimize2,
   Navigation,
   Pencil,
   Ruler,
@@ -17,7 +19,10 @@ import {
   TrafficCone,
   X,
 } from 'lucide-react'
-import { KnowledgePlaceDetails } from '@/components/KnowledgePlaceDetails'
+import {
+  KnowledgePlaceDetails,
+  KnowledgeReferencePanel,
+} from '@/components/KnowledgePlaceDetails'
 import { PlaceMediaGallery } from '@/components/PlaceMediaGallery'
 import {
   DAY_COLORS,
@@ -44,6 +49,7 @@ import {
 import { placeLibraryEntry } from '@/lib/place-media'
 import {
   isKnowledgePlaceSelected,
+  knowledgePlaceForStop,
   knowledgePlacesForScope,
   knowledgePlaceToStop,
 } from '@/lib/qinggan-v10'
@@ -53,6 +59,7 @@ import type {
   MapFocusMode,
   MapScope,
   MapVisibility,
+  PlacePhoto,
   ResolvedLeg,
   Roadbook,
   TripStop,
@@ -129,7 +136,7 @@ function markerElement({
   dayIndex,
   stopIndex,
   stop,
-  photoUrl,
+  photo,
   selected,
   dimmed,
   showNumber,
@@ -139,7 +146,7 @@ function markerElement({
   dayIndex: number
   stopIndex: number
   stop: TripStop
-  photoUrl?: string
+  photo?: PlacePhoto
   selected: boolean
   dimmed: boolean
   showNumber: boolean
@@ -165,16 +172,18 @@ function markerElement({
   fallback.className = 'map-marker-fallback'
   fallback.textContent = stop.type === 'hotel' ? '住' : stop.type === 'fuel' ? '油' : '景'
   pin.appendChild(fallback)
-  if (photoUrl) {
-    const photo = document.createElement('img')
-    photo.alt = ''
-    photo.onload = () => {
-      if (photo.naturalWidth === photo.naturalHeight) photo.remove()
+  if (photo) {
+    const image = document.createElement('img')
+    image.alt = ''
+    image.onload = () => {
+      if (photo.source === 'generated' && image.naturalWidth === image.naturalHeight) {
+        image.remove()
+      }
       else fallback.remove()
     }
-    photo.onerror = () => photo.remove()
-    photo.src = photoUrl
-    pin.appendChild(photo)
+    image.onerror = () => image.remove()
+    image.src = photo.url
+    pin.appendChild(image)
   }
   if (showNumber) {
     const number = document.createElement('b')
@@ -217,7 +226,7 @@ function markerElement({
   return marker
 }
 
-function knowledgeMarkerElement(place: KnowledgePlace, photoUrl?: string) {
+function knowledgeMarkerElement(place: KnowledgePlace, photo?: PlacePhoto) {
   const marker = document.createElement('button')
   marker.type = 'button'
   marker.className = [
@@ -232,16 +241,19 @@ function knowledgeMarkerElement(place: KnowledgePlace, photoUrl?: string) {
   fallback.textContent = place.isNiche ? '秘' : '景'
   marker.appendChild(fallback)
 
-  if (photoUrl) {
-    const photo = document.createElement('img')
-    photo.src = photoUrl
-    photo.alt = ''
-    photo.onload = () => {
-      if (photo.naturalWidth !== photo.naturalHeight) fallback.remove()
-      else photo.remove()
+  if (photo) {
+    const image = document.createElement('img')
+    image.alt = ''
+    image.onload = () => {
+      if (photo.source !== 'generated' || image.naturalWidth !== image.naturalHeight) {
+        fallback.remove()
+      } else {
+        image.remove()
+      }
     }
-    photo.onerror = () => photo.remove()
-    marker.appendChild(photo)
+    image.onerror = () => image.remove()
+    image.src = photo.url
+    marker.appendChild(image)
   }
   return marker
 }
@@ -402,6 +414,7 @@ export function AmapCanvas({
   const [measuring, setMeasuring] = useState(false)
   const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null)
   const [dismissedStopId, setDismissedStopId] = useState<string | null>(null)
+  const [detailExpanded, setDetailExpanded] = useState(false)
   const knowledgePlaces = useMemo(() => knowledgePlacesForScope(roadbook), [roadbook])
   const externalSelectedDay = selectedStopId
     ? roadbook.days.find((day) => day.stops.some((stop) => stop.id === selectedStopId))
@@ -432,6 +445,9 @@ export function AmapCanvas({
     detailElement?.kind === 'leg'
       ? selectedDay?.stops.find((stop) => stop.id === detailElement.fromStopId)
       : null
+  const selectedStopKnowledge = selectedStop
+    ? knowledgePlaceForStop(selectedStop)
+    : undefined
 
   useEffect(() => {
     let cancelled = false
@@ -535,7 +551,7 @@ export function AmapCanvas({
               dayIndex,
               stopIndex,
               stop,
-              photoUrl: placeLibraryEntry(roadbook, stop).photos[0]?.url,
+              photo: placeLibraryEntry(roadbook, stop).photos[0],
               selected: selectedStopId === stop.id,
               dimmed: !emphasizeMarker,
               showNumber: scope.mode !== 'global',
@@ -599,7 +615,7 @@ export function AmapCanvas({
         }
         const content = knowledgeMarkerElement(
           place,
-          placeLibraryEntry(roadbook, virtualStop).photos[0]?.url,
+          placeLibraryEntry(roadbook, virtualStop).photos[0],
         )
         content.addEventListener('click', selectKnowledgePlace)
         const marker = new AMap.Marker({
@@ -985,11 +1001,22 @@ export function AmapCanvas({
       </div>
 
       {selectedKnowledge && selectedKnowledgeStop ? (
-        <aside className="map-detail-panel">
+        <aside className={`map-detail-panel${detailExpanded ? ' is-expanded' : ''}`}>
+          <button
+            type="button"
+            className="map-detail-expand"
+            onClick={() => setDetailExpanded((current) => !current)}
+            title={detailExpanded ? '缩小详情' : '放大详情'}
+          >
+            {detailExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
           <button
             type="button"
             className="map-detail-close"
-            onClick={() => setSelectedElement(null)}
+            onClick={() => {
+              setSelectedElement(null)
+              setDetailExpanded(false)
+            }}
             aria-label="关闭地图详情"
           >
             <X size={16} />
@@ -1009,13 +1036,22 @@ export function AmapCanvas({
       ) : null}
 
       {detailElement && selectedStop && selectedDay ? (
-        <aside className="map-detail-panel">
+        <aside className={`map-detail-panel${detailExpanded ? ' is-expanded' : ''}`}>
+          <button
+            type="button"
+            className="map-detail-expand"
+            onClick={() => setDetailExpanded((current) => !current)}
+            title={detailExpanded ? '缩小详情' : '放大详情'}
+          >
+            {detailExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
           <button
             type="button"
             className="map-detail-close"
             onClick={() => {
               setSelectedElement(null)
               setDismissedStopId(selectedStop.id)
+              setDetailExpanded(false)
             }}
             aria-label="关闭地图详情"
           >
@@ -1072,6 +1108,9 @@ export function AmapCanvas({
                 onAddPhoto={onAddPlacePhoto}
                 onAddNote={onAddPlaceNote}
               />
+              {selectedStopKnowledge ? (
+                <KnowledgeReferencePanel place={selectedStopKnowledge} />
+              ) : null}
               <div className="map-detail-metrics">
                 <span><strong>{selectedStop.arrivalTime}</strong> 到达</span>
                 <span><strong>{selectedStop.stayMinutes}</strong> 分钟</span>

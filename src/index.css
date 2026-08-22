@@ -3964,3 +3964,241 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
+/* Version 11 place detail and gallery */
+.map-detail-expand {
+  position: absolute;
+  top: 10px;
+  right: 43px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #7b8792;
+  cursor: pointer;
+}
+
+.map-detail-expand:hover,
+.map-detail-close:hover {
+  background: #eef3f5;
+  color: #20313d;
+}
+
+.map-detail-panel.is-expanded {
+  z-index: 220;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  width: auto;
+  max-height: none;
+  padding: 24px;
+}
+
+.map-detail-panel.is-expanded h3 {
+  font-size: 22px;
+}
+
+.place-photo-carousel {
+  position: relative;
+  display: grid;
+  min-height: 178px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #dbe3e7;
+  border-radius: 5px;
+  background: #edf2f4;
+  touch-action: pan-y;
+}
+
+.place-photo-carousel figure {
+  position: relative;
+  width: 100%;
+  margin: 0;
+}
+
+.place-photo-carousel figure[hidden] {
+  display: none;
+}
+
+.place-photo-carousel img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.place-photo-carousel figcaption {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(24, 36, 46, 0.76);
+  color: #fff;
+  font-size: 10px;
+  padding: 6px 9px;
+}
+
+.place-photo-carousel > button {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  width: 30px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 4px;
+  background: rgba(27, 42, 54, 0.68);
+  color: #fff;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.place-photo-previous {
+  left: 8px;
+}
+
+.place-photo-next {
+  right: 8px;
+}
+
+.place-photo-counter {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border-radius: 3px;
+  background: rgba(27, 42, 54, 0.7);
+  color: #fff;
+  font-size: 10px;
+  padding: 3px 6px;
+}
+
+.place-photo-empty {
+  display: flex;
+  min-height: 178px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #7d8992;
+  font-size: 11px;
+}
+
+.place-photo-thumbnails {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 7px 1px 2px;
+}
+
+.place-photo-thumbnails button {
+  width: 54px;
+  height: 40px;
+  flex: 0 0 54px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: #edf2f4;
+  cursor: pointer;
+  padding: 0;
+}
+
+.place-photo-thumbnails button.is-active {
+  border-color: #10a7a2;
+}
+
+.place-photo-thumbnails img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.place-media-library > .place-photo-add {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 7px;
+}
+
+.knowledge-place-travelogue,
+.knowledge-place-references {
+  margin: 11px 0;
+}
+
+.knowledge-place-travelogue h4,
+.knowledge-place-references h4 {
+  margin: 0 0 6px;
+  color: #263743;
+  font-size: 12px;
+}
+
+.knowledge-place-travelogue p {
+  border-left: 3px solid #10a7a2;
+  background: #edf8f7;
+  color: #52616c;
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 0;
+  padding: 8px 9px;
+}
+
+.knowledge-place-references > div {
+  display: grid;
+  gap: 5px;
+}
+
+.knowledge-place-references a {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 12px;
+  align-items: center;
+  gap: 5px;
+  border-bottom: 1px solid #e5eaed;
+  color: #405562;
+  font-size: 11px;
+  padding: 6px 2px;
+  text-decoration: none;
+}
+
+.knowledge-place-references a:hover {
+  color: #087f7b;
+}
+
+.knowledge-place-references a span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .map-detail-panel.is-expanded {
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    width: auto;
+    max-height: none;
+  }
+}
+
+.baidu-measure-delete {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #d94f45;
+  box-shadow: 0 2px 6px rgba(25, 38, 52, 0.25);
+  color: #fff;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0;
+}
+
+.map-detail-panel h3 {
+  margin-right: 64px;
+}

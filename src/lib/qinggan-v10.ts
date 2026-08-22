@@ -5,6 +5,7 @@ import type {
   ExpenseCategory,
   ExpenseItem,
   KnowledgePlace,
+  KnowledgeReference,
   PlaceLibraryEntry,
   PlaceType,
   Roadbook,
@@ -44,8 +45,12 @@ interface RawKnowledgePlace {
   suggested_day: string
   detour_note: string
   summary: string
+  travelogue: string
+  photo_tips: string
   open_time: string
   ref_url: string
+  images: Array<{ caption: string; url: string }>
+  references: KnowledgeReference[]
   address: string
   location: number[]
 }
@@ -132,8 +137,12 @@ export const qingganKnowledgePlaces: KnowledgePlace[] = rawKnowledge.pois.map((p
   suggestedDay: place.suggested_day,
   detourNote: place.detour_note,
   summary: place.summary,
+  travelogue: place.travelogue,
+  photoTips: place.photo_tips,
   openTime: place.open_time,
   refUrl: place.ref_url,
+  images: place.images,
+  references: place.references,
   address: place.address,
   location: [Number(place.location[0]), Number(place.location[1])],
 }))
@@ -186,6 +195,8 @@ function knowledgeNotes(place: KnowledgePlace): TripNote[] {
         )
       : null,
     place.bestTime ? note(`${place.id}-best-time`, `最佳拍摄时间：${place.bestTime}`) : null,
+    place.photoTips ? note(`${place.id}-photo-tips`, `拍摄建议：${place.photoTips}`) : null,
+    place.travelogue ? note(`${place.id}-travelogue`, `游记评价：${place.travelogue}`) : null,
     place.roadRequirement
       ? note(`${place.id}-road`, `道路与车型：${place.roadRequirement}`)
       : null,
@@ -231,6 +242,15 @@ export function isKnowledgePlaceSelected(place: KnowledgePlace, roadbook: Roadbo
   )
   return matchKeys(place).some((key) =>
     stopKeys.some((stopKey) => stopKey === key || stopKey.includes(key) || key.includes(stopKey)),
+  )
+}
+
+export function knowledgePlaceForStop(stop: TripStop) {
+  const stopKey = placeLibraryKey(stop)
+  return qingganKnowledgePlaces.find((place) =>
+    matchKeys(place).some(
+      (key) => stopKey === key || stopKey.includes(key) || key.includes(stopKey),
+    ),
   )
 }
 
@@ -443,13 +463,20 @@ function buildKnowledgeLibrary(): Record<string, PlaceLibraryEntry> {
     qingganKnowledgePlaces.map((place) => {
       const virtualStop = knowledgePlaceToStop(place)
       const key = placeLibraryKey(virtualStop)
+      const referencePhotos = place.images.map((image, index) => ({
+        id: `${place.id}-reference-${index + 1}`,
+        url: image.url,
+        caption: image.caption || `${place.name}资料图片 ${index + 1}`,
+        source: 'reference' as const,
+        createdAt: CREATED_AT,
+      }))
       return [
         key,
         {
           key,
           name: place.name,
           address: place.address,
-          photos: defaultPlacePhotos(virtualStop),
+          photos: [...referencePhotos, ...defaultPlacePhotos(virtualStop)],
           notes: knowledgeNotes(place),
           updatedAt: CREATED_AT,
         },
@@ -470,7 +497,7 @@ function buildDays(): TripDay[] {
 export function buildQingganV10Roadbook(): Roadbook {
   return {
     id: QINGGAN_V10_ROADBOOK_ID,
-    dataVersion: 10,
+    dataVersion: 11,
     title: '青甘大环线 · 知识库 12 日',
     summary: `${rawKnowledge.meta.direction}。4 名成人，SUV 自驾约 3,580 公里；资料核验于 ${rawKnowledge.meta.last_verified}。`,
     startDate: rawKnowledge.itinerary[0].date,

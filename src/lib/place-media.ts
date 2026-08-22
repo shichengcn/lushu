@@ -38,21 +38,17 @@ export function defaultPlacePhotos(
   const key = placeLibraryKey(stop)
   const createdAt = '2026-08-21T00:00:00.000Z'
   return [
-    {
-      id: `${key}-overview`,
-      url: generatedPhotoUrl(stop, 'wide establishing view showing the real destination'),
-      caption: `${stop.name}全景`,
-      source: 'generated',
-      createdAt,
-    },
-    {
-      id: `${key}-detail`,
-      url: generatedPhotoUrl(stop, 'closer visitor viewpoint highlighting recognizable details'),
-      caption: `${stop.name}旅行视角`,
-      source: 'generated',
-      createdAt,
-    },
-  ]
+    ['overview', 'wide establishing view showing the real destination', `${stop.name}全景`],
+    ['detail', 'closer visitor viewpoint highlighting recognizable details', `${stop.name}旅行视角`],
+    ['photo-spot', 'best photography viewpoint during golden hour', `${stop.name}推荐机位`],
+    ['journey', 'traveler eye-level documentary view with surrounding road and landscape', `${stop.name}沿途视角`],
+  ].map(([suffix, view, caption]) => ({
+    id: `${key}-${suffix}`,
+    url: generatedPhotoUrl(stop, view),
+    caption,
+    source: 'generated' as const,
+    createdAt,
+  }))
 }
 
 export function placeLibraryEntry(
@@ -83,12 +79,18 @@ export function ensurePlaceLibraryEntry(
   const key = placeLibraryKey(stop)
   const existing = library[key]
   if (existing) {
+    const defaults = defaultPlacePhotos(stop)
+    const existingIds = new Set(existing.photos.map((photo) => photo.id))
     return {
       ...library,
       [key]: {
         ...existing,
         name: stop.name,
         address: stop.address,
+        photos: [
+          ...existing.photos,
+          ...defaults.filter((photo) => !existingIds.has(photo.id)),
+        ],
       },
     }
   }
@@ -118,7 +120,12 @@ export function normalizePlaceLibrary(raw: unknown) {
               id: photo.id || `${key}-${Math.random().toString(36).slice(2, 8)}`,
               url: photo.url,
               caption: photo.caption || entry.name || '地点照片',
-              source: photo.source === 'upload' ? 'upload' as const : 'generated' as const,
+              source:
+                photo.source === 'upload'
+                  ? 'upload' as const
+                  : photo.source === 'reference'
+                    ? 'reference' as const
+                    : 'generated' as const,
               createdAt: photo.createdAt || new Date().toISOString(),
             }))
         : []
